@@ -137,4 +137,5 @@ print("Final missing values check:", df.isnull().sum().sum())
 
 # Save the preprocessed DataFrame to a CSV file
 df.to_csv("preprocessed_appendicitis.csv", index=False)
+
 print("\nPreprocessed dataset saved as 'preprocessed_appendicitis.csv'")
