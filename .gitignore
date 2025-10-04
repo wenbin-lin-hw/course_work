@@ -64,4 +64,13 @@ logs/
 results/
 output/
 pictures/
-
+analysis_corralation.py
+analysis_total_correlation.py
+analyze_appendicitis_correlation.py
+correlation_analysis.py
+feild_type_number.py
+main.py
+missing_data_analysis.csv
+missing_data_analysis.png
+missing_data_analysis.py
+overall_correlation_analysis.py
