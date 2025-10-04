@@ -1,0 +1,67 @@
+# ===== Python 通用忽略规则 =====
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 虚拟环境
+venv/
+env/
+ENV/
+.venv/
+.idea/
+.vscode/
+
+# 编译文件 / 临时文件
+*.so
+*.log
+*.pot
+*.pyc
+*.pyo
+*.pyd
+*.db
+*.sqlite3
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# 单元测试缓存
+.pytest_cache/
+.tox/
+.nox/
+coverage.xml
+htmlcov/
+.cache/
+
+# Jupyter Notebook 临时文件
+.ipynb_checkpoints/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# ===== PyCharm 特有文件 =====
+# PyCharm 项目配置目录（包含个性化环境设置）
+.idea/**
+
+# 但保留项目必要的配置文件（可选）
+!.idea/runConfigurations/
+!.idea/codeStyles/
+!.idea/inspectionProfiles/
+
+# ===== 环境配置 =====
+.env
+*.env
+*.ini
+*.cfg
+*.json
+
+# ===== 临时数据 / 输出文件 =====
+data/
+tmp/
+logs/
+results/
+output/
+pictures/
+
