@@ -5,30 +5,31 @@ import numpy as np
 from sklearn.impute import SimpleImputer, KNNImputer
 from sklearn.preprocessing import LabelEncoder
 
-def handle_missing_data(df):
+def handle_missing_data():
     """处理appendicitis数据集的缺失数据"""
+    df = pd.read_excel('data/appendicitis/app_data.xlsx', names=['All cases'])
     df_processed = df.copy()
     
     # 1. 删除缺失率过高的列（>70%）
     high_missing_cols = []
-    high_missing_cols.append('Segmented_Neutrophils')
-    high_missing_cols.append('Appendix_Wall_Layers')
-    high_missing_cols.append('Target_Sign')
-    high_missing_cols.append('Appendicolith')
-    high_missing_cols.append('Perfusion')
-    high_missing_cols.append('Perforation')
-    high_missing_cols.append('Appendicular_Abscess')
-    high_missing_cols.append('Abscess_Location')
-    high_missing_cols.append('Pathological_Lymph_Nodes')
-    high_missing_cols.append('Lymph_Nodes_Location')
-    high_missing_cols.append('Bowel_Wall_Thickening')
-    high_missing_cols.append('Conglomerate_of_Bowel_Loops')
+    # high_missing_cols.append('Segmented_Neutrophils')
+    # high_missing_cols.append('Appendix_Wall_Layers')
+    # high_missing_cols.append('Target_Sign')
+    # high_missing_cols.append('Appendicolith')
+    # high_missing_cols.append('Perfusion')
+    # high_missing_cols.append('Perforation')
+    # high_missing_cols.append('Appendicular_Abscess')
+    # high_missing_cols.append('Abscess_Location')
+    # high_missing_cols.append('Pathological_Lymph_Nodes')
+    # high_missing_cols.append('Lymph_Nodes_Location')
+    # high_missing_cols.append('Bowel_Wall_Thickening')
+    # high_missing_cols.append('Conglomerate_of_Bowel_Loops')
     high_missing_cols.append('Ileus')
-    high_missing_cols.append('Coprostasis')
-    high_missing_cols.append('Meteorism')
-    high_missing_cols.append('Enteritis')
-    high_missing_cols.append('Gynecological_Findings')
-    df_processed = df_processed.drop(columns=high_missing_cols)
+    # high_missing_cols.append('Coprostasis')
+    # high_missing_cols.append('Meteorism')
+    # high_missing_cols.append('Enteritis')
+    # high_missing_cols.append('Gynecological_Findings')
+    df_processed = df_processed.drop(high_missing_cols,axis=1)
 
     # 2. 数值型特征插补
     numerical_cols = df_processed.select_dtypes(include=[np.number]).columns
@@ -71,8 +72,12 @@ def handle_missing_data(df):
                     df_processed[col].fillna(mode_val[0], inplace=True)
                 else:
                     df_processed[col].fillna('Unknown', inplace=True)
-    
+
+    df_processed.to_excel("data/appendicitis/app_data_processed.xlsx")
     return df_processed
+
+
+handle_missing_data()
 
 # 使用示例
 # df_clean = handle_missing_data(df_original)

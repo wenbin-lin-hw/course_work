@@ -55,6 +55,7 @@ def analyze_correlation_with_targets(file_path, target_columns=['Diagnosis', 'Se
             print(f"\n{'=' * 80}")
             print(f"ANALYZING CORRELATIONS WITH {target_col.upper()}")
             print(f"{'=' * 80}")
+            except_cols = ['US_Number']
 
             target = df[target_col]
             correlation_results = []
