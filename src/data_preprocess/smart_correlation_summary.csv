@@ -1,0 +1,4 @@
+﻿Target,Total_Features_Analyzed,Valid_Results,Significant_Results,Pearson_Tests,Chi_Square_Tests,Max_Effect_Size,Mean_Effect_Size,Significant_Percentage
+Management,33,15,12,15,0,0.5522095578516576,0.1955308968600288,80.0
+Severity,33,31,18,15,16,0.5401775558584893,0.15204725000885497,58.06451612903226
+Diagnosis,33,32,23,15,17,0.8928066759408135,0.2064815887316211,71.875
