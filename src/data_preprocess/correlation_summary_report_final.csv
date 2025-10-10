@@ -1,4 +1,0 @@
-﻿Target,Total_Features,Valid_Correlations,Strong_Positive,Moderate_Positive,Weak_Positive,Weak_Negative,Moderate_Negative,Strong_Negative,Max_Correlation,Avg_Abs_Correlation
-Management,33,33,2,5,5,1,1,0,0.5601305101180206,0.16414276810528472
-Severity,33,33,0,1,3,7,3,1,0.5401775558584893,0.1519893953406215
-Diagnosis,33,33,0,1,1,7,6,2,0.8954428330705206,0.19944097984161543

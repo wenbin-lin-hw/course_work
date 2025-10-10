@@ -1,7 +1,0 @@
-Metric,Value
-Mean_CV_Accuracy,0.8820512820512819
-Std_CV_Accuracy,0.016573264469799436
-Best_CV_Accuracy,0.8974358974358975
-Final_Test_Accuracy,0.8520408163265306
-Number_of_Features,10.0
-Number_of_Folds,5.0
