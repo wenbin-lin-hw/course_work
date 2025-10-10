@@ -11,7 +11,9 @@ import torch.nn as nn
 from pytorch_tabnet.tab_model import TabNetClassifier
 import warnings
 
+import matplotlib
 warnings.filterwarnings('ignore')
+matplotlib.use('TkAgg')
 
 
 class TabNetDiagnosisTrainer:
