@@ -27,7 +27,7 @@ class SmartCorrelationAnalyzer:
         try:
             # Try to read from different possible sheet names
             sheet_names = ['Processed_Data', None]  # None means default sheet
-            print('sheet_names111',sheet_names)
+
             for sheet in sheet_names:
                 try:
                     if sheet:
@@ -184,7 +184,6 @@ class SmartCorrelationAnalyzer:
                 valid_mask = ~np.isnan(feature_clean) & ~np.isnan(target_encoded)
                 feature_clean = feature_clean[valid_mask]
                 target_encoded = target_encoded[valid_mask]
-
                 if len(feature_clean) < 10:
                     return np.nan, np.nan, len(feature_clean)
 
@@ -429,7 +428,7 @@ class SmartCorrelationAnalyzer:
                      f'{int(height)}', ha='center', va='bottom')
 
         plt.tight_layout()
-        filename = f'smart_correlation_analysis_{target_col}.png'
+        filename = f'../../pictures/smart_correlation_analysis_{target_col}.png'
         plt.savefig(filename, dpi=300, bbox_inches='tight')
         plt.show()
 
@@ -461,7 +460,7 @@ class SmartCorrelationAnalyzer:
             all_results[target] = results_df
 
             # Save to CSV
-            filename = f'smart_correlation_{target}.csv'
+            filename = f'../../output/smart_correlation_{target}.csv'
             results_df.to_csv(filename, index=False, encoding='utf-8-sig')
             print(f"\nDetailed results saved: {filename}")
 
@@ -509,9 +508,7 @@ class SmartCorrelationAnalyzer:
                     print(f"Pearson correlations: {summary['Pearson_Tests']}")
                     print(f"Chi-square tests: {summary['Chi_Square_Tests']}")
                     print(f"Maximum effect size: {summary['Max_Effect_Size']:.4f}")
-                    print(f"Mean effect size: {summary['Mean_Effect_Size']:.4f}")
-
-                    # Show top 3 significant features
+                    print(f"Mean effect size: {summary['Mean_Effect_Size']:.4f}")  # Show top 3 significant features
                     top_significant = significant_results.head(3)
                     if len(top_significant) > 0:
                         print(f"\nTop 3 significant associations:")
@@ -522,7 +519,7 @@ class SmartCorrelationAnalyzer:
         # Save summary
         if summary_data:
             summary_df = pd.DataFrame(summary_data)
-            summary_df.to_csv('smart_correlation_summary.csv', index=False, encoding='utf-8-sig')
+            summary_df.to_csv('../../output/smart_correlation_summary.csv', index=False, encoding='utf-8-sig')
             print(f"\nFinal summary saved: smart_correlation_summary.csv")
 
         return summary_data
@@ -557,7 +554,7 @@ class SmartCorrelationAnalyzer:
         for target in self.available_targets:
             print(f"  - smart_correlation_{target}.csv")
             print(f"  - smart_correlation_analysis_{target}.png")
-        print("  - smart_correlation_summary.csv")
+        print("- smart_correlation_summary.csv")
 
         print(f"\nAnalysis method summary:")
         print(f"- Numerical features (>6 unique values): Pearson Correlation")
