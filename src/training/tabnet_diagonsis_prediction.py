@@ -7,26 +7,11 @@ from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
 from scipy.stats import pearsonr, chi2_contingency
 import warnings
-
+import matplotlib
 warnings.filterwarnings('ignore')
-
-
+matplotlib.use('TkAgg')
 from pytorch_tabnet.tab_model import TabNetClassifier
-from pytorch_tabnet.metrics import Metric
-import torch
 
-TABNET_AVAILABLE = True
-
-print("TabNet not installed. Installing...")
-import subprocess
-import sys
-
-subprocess.check_call([sys.executable, "-m", "pip", "install", "pytorch-tabnet"])
-import pytorch_tabnet.tab_model
-import pytorch_tabnet.metrics
-import torch
-
-TABNET_AVAILABLE = True
 
 
 class DiagnosisPredictor:
@@ -35,7 +20,7 @@ class DiagnosisPredictor:
         self.data_path = data_path
         self.data = None
         self.target_column = 'Diagnosis'
-        self.exclude_columns = ['Management', 'Severity']
+        self.exclude_columns = ['US_Performed', 'US_Number', 'Management', 'Severity', 'Diagnosis']
         self.selected_features = None
         self.label_encoder = LabelEncoder()
         self.scaler = StandardScaler()
@@ -426,10 +411,10 @@ class DiagnosisPredictor:
             plt.title('Feature Correlation Matrix (Top 8)')
 
         plt.tight_layout()
-        plt.savefig('tabnet_diagnosis_prediction_results.png', dpi=300, bbox_inches='tight')
+        plt.savefig('../../pictures/tabnet_diagnosis_prediction_results.png', dpi=300, bbox_inches='tight')
         plt.show()
 
-        print("✓ Visualization saved as: tabnet_diagnosis_prediction_results.png")
+        print("✓ Visualization saved as: pictures/tabnet_diagnosis_prediction_results.png")
 
         return importance_df
 
@@ -543,7 +528,7 @@ class DiagnosisPredictor:
     def save_results(self, fold_results, test_results, importance_df):
         """Save experiment results to files"""
         # Save feature importance
-        importance_df.to_csv('tabnet_feature_importance.csv', index=False)
+        importance_df.to_csv('../../output/tabnet_feature_importance.csv', index=False)
 
         # Save detailed results
         results_summary = {
@@ -562,13 +547,13 @@ class DiagnosisPredictor:
         }
 
         results_df = pd.DataFrame(results_summary)
-        results_df.to_csv('tabnet_diagnosis_results.csv', index=False)
+        results_df.to_csv('../../results/tabnet_diagnosis_results.csv', index=False)
 
         # Save selected features and their correlations
         feature_details = self.correlation_results[
             self.correlation_results['Feature'].isin(self.selected_features)
         ].copy()
-        feature_details.to_csv('selected_features_correlation.csv', index=False)
+        feature_details.to_csv('../../output/selected_features_correlation.csv', index=False)
 
         print("✓ Results saved:")
         print("  - tabnet_feature_importance.csv")

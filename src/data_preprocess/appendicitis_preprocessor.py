@@ -65,152 +65,87 @@ class AppendicitisPreprocessor:
         """Step 1: Remove rows with empty Age column"""
         print(f"\nStep 1: Remove rows with empty Age column")
         print("-" * 40)
-
         initial_rows = len(self.processed_data)
-
-        if 'Age' in self.processed_data.columns:
-            age_missing = self.processed_data['Age'].isnull().sum()
-            print(f"Age column missing values: {age_missing}")
-
-            if age_missing > 0:
-                self.processed_data = self.processed_data.dropna(subset=['Age'])
-                final_rows = len(self.processed_data)
-                removed_rows = initial_rows - final_rows
-                self.log_step("Remove Empty Age Rows", f"Removed {removed_rows} rows, remaining {final_rows} rows")
-            else:
-                self.log_step("Remove Empty Age Rows", "No missing values in Age column")
+        age_missing = self.processed_data['Age'].isnull().sum()
+        print(f"Age column missing values: {age_missing}")
+        if age_missing > 0:
+            self.processed_data = self.processed_data.dropna(subset=['Age'])
+            final_rows = len(self.processed_data)
+            removed_rows = initial_rows - final_rows
+            self.log_step("Remove Empty Age Rows", f"Removed {removed_rows} rows, remaining {final_rows} rows")
         else:
-            print("Age column not found")
-            self.log_step("Remove Empty Age Rows", "Age column not found")
+            self.log_step("Remove Empty Age Rows", "No missing values in Age column")
 
     def step2_fill_diagnosis_missing(self):
         """Step 2: Fill Diagnosis column missing values with appendicitis"""
         print(f"\nStep 2: Fill Diagnosis column missing values")
         print("-" * 40)
-
-        if 'Diagnosis' in self.processed_data.columns:
-            missing_count = self.processed_data['Diagnosis'].isnull().sum()
-            print(f"Diagnosis missing values: {missing_count}")
-
-            if missing_count > 0:
-                self.processed_data['Diagnosis'].fillna('appendicitis', inplace=True)
-                self.log_step("Diagnosis Filling", f"Filled {missing_count} missing values with 'appendicitis'")
-            else:
-                self.log_step("Diagnosis Filling", "No missing values to fill")
+        missing_count = self.processed_data['Diagnosis'].isnull().sum()
+        print(f"Diagnosis missing values: {missing_count}")
+        if missing_count > 0:
+            self.processed_data['Diagnosis'].fillna('appendicitis', inplace=True)
+            self.log_step("Diagnosis Filling", f"Filled {missing_count} missing values with 'appendicitis'")
         else:
-            print("Diagnosis column not found")
-            self.log_step("Diagnosis Filling", "Diagnosis column not found")
+            self.log_step("Diagnosis Filling", "No missing values to fill")
 
     def step3_remove_high_missing_columns(self, threshold=70):
         """Step 3: Remove columns with missing rate greater than 70%"""
         print(f"\nStep 3: Remove columns with missing rate greater than {threshold}%")
         print("-" * 40)
-
         missing_pct = (self.processed_data.isnull().sum() / len(self.processed_data)) * 100
         high_missing_cols = missing_pct[missing_pct > threshold].index.tolist()
-
-        if high_missing_cols:
-            print("High missing rate columns:")
-            for col in high_missing_cols:
-                print(f"  - {col}: {missing_pct[col]:.1f}%")
-
-            self.processed_data = self.processed_data.drop(columns=high_missing_cols)
-            self.log_step("Remove High Missing Columns", f"Removed {len(high_missing_cols)} columns: {high_missing_cols}")
-        else:
-            self.log_step("Remove High Missing Columns", f"No columns with missing rate greater than {threshold}%")
+        print("High missing rate columns:")
+        for col in high_missing_cols:
+            print(f"  - {col}: {missing_pct[col]:.1f}%")
+        self.processed_data = self.processed_data.drop(columns=high_missing_cols)
+        self.log_step("Remove High Missing Columns", f"Removed {len(high_missing_cols)} columns: {high_missing_cols}")
 
     def step4_fill_bmi_mean(self):
         """Step 4: Fill BMI column with mean values"""
         print(f"\nStep 4: Fill BMI column with mean values")
         print("-" * 40)
-
-        if 'BMI' in self.processed_data.columns:
-            missing_count = self.processed_data['BMI'].isnull().sum()
-            if missing_count > 0:
-                mean_value = self.processed_data['BMI'].mean()
-                self.processed_data['BMI'].fillna(mean_value, inplace=True)
-                self.log_step("BMI Mean Filling", f"Filled {missing_count} missing values with mean {mean_value:.2f}")
-            else:
-                self.log_step("BMI Mean Filling", "No missing values to fill")
-        else:
-            self.log_step("BMI Mean Filling", "BMI column not found")
+        missing_count = self.processed_data['BMI'].isnull().sum()
+        mean_value = self.processed_data['BMI'].mean()
+        self.processed_data['BMI'].fillna(mean_value, inplace=True)
+        self.log_step("BMI Mean Filling", f"Filled {missing_count} missing values with mean {mean_value:.2f}")
 
     def step5_knn_fill_height_weight(self):
         """Step 5: Fill Height and Weight using KNN with Age dimension"""
         print(f"\nStep 5: KNN filling for Height and Weight")
         print("-" * 40)
+        for col in ['Height', 'Weight']:
+            if col in self.processed_data.columns:
+                missing_count = self.processed_data[col].isnull().sum()
+                print(f"Processing {col} column, missing values: {missing_count}")
+                # Prepare KNN data
+                knn_data = self.processed_data[['Age', col]].copy()
+                # Use KNN filling
+                imputer = KNNImputer(n_neighbors=5)
+                filled_data = imputer.fit_transform(knn_data)
+                # Update data
+                self.processed_data[col] = filled_data[:, 1]
+                self.log_step(f"{col} KNN Filling", f"Filled {missing_count} missing values in {col} column using KNN")
 
-        # Find Height and Weight columns
-        height_cols = [col for col in self.processed_data.columns if 'height' in col.lower()]
-        weight_cols = [col for col in self.processed_data.columns if 'weight' in col.lower()]
-
-        print(f"Found Height columns: {height_cols}")
-        print(f"Found Weight columns: {weight_cols}")
-
-        if 'Age' not in self.processed_data.columns:
-            self.log_step("KNN Filling", "Age column not found, cannot perform KNN filling")
-            return
-
-        for col_type, cols in [('Height', height_cols), ('Weight', weight_cols)]:
-            for col in cols:
-                if col in self.processed_data.columns:
-                    missing_count = self.processed_data[col].isnull().sum()
-                    if missing_count > 0:
-                        print(f"Processing {col} column, missing values: {missing_count}")
-
-                        # Prepare KNN data
-                        knn_data = self.processed_data[['Age', col]].copy()
-
-                        # Use KNN filling
-                        imputer = KNNImputer(n_neighbors=5)
-                        filled_data = imputer.fit_transform(knn_data)
-
-                        # Update data
-                        self.processed_data[col] = filled_data[:, 1]
-                        self.log_step(f"{col_type} KNN Filling", f"Filled {missing_count} missing values in {col} column using KNN")
-                    else:
-                        self.log_step(f"{col_type} KNN Filling", f"No missing values in {col} column")
-
-    def step6_remove_length_of_stay(self):
+    def step6_remove_non_relative_cols(self):
         """Step 6: Remove Length_of_Stay columns"""
         print(f"\nStep 6: Remove Length_of_Stay related columns")
         print("-" * 40)
-
         # Find hospital stay related columns
-        stay_keywords = ['length', 'stay', 'hospital', 'los', 'duration','diagnosis_presumptive']
-        stay_cols = []
-
-        for col in self.processed_data.columns:
-            if any(keyword in col.lower() for keyword in stay_keywords):
-                stay_cols.append(col)
-
-        if stay_cols:
-            print(f"Found hospital stay related columns: {stay_cols}")
-            self.processed_data = self.processed_data.drop(columns=stay_cols)
-            self.log_step("Remove Hospital Stay Columns", f"Removed {len(stay_cols)} columns: {stay_cols}")
-        else:
-            self.log_step("Remove Hospital Stay Columns", "No hospital stay related columns found")
+        exclude_cols = ['Length_of_Stay','Diagnosis_Presumptive']
+        self.processed_data = self.processed_data.drop(columns=exclude_cols)
+        self.log_step("Remove Specific Columns", f"Removed column: {','.join(exclude_cols)}")
 
     def identify_column_types(self):
         """Identify column data types"""
         print(f"\nData type identification:")
         print("-" * 30)
-
         categorical_cols = []
         numerical_cols = []
-        date_cols = []
-
         # Special handling columns
         special_cols = ['US_Number']
-
         for col in self.processed_data.columns:
             if col in special_cols:
                 continue
-
-            # Check if date type
-            if any(keyword in col.lower() for keyword in ['date', 'time']) or 'datetime' in str(
-                    self.processed_data[col].dtype):
-                date_cols.append(col)
             # Check if categorical type
             elif (self.processed_data[col].dtype == 'object' or
                   (self.processed_data[col].dtype in ['int64', 'float64'] and
@@ -223,50 +158,36 @@ class AppendicitisPreprocessor:
             else:
                 # Default to categorical
                 categorical_cols.append(col)
-
         print(f"Categorical columns ({len(categorical_cols)}): {categorical_cols[:5]}{'...' if len(categorical_cols) > 5 else ''}")
         print(f"Numerical columns ({len(numerical_cols)}): {numerical_cols[:5]}{'...' if len(numerical_cols) > 5 else ''}")
-        print(f"Date columns ({len(date_cols)}): {date_cols}")
-
-        return categorical_cols, numerical_cols, date_cols
+        return categorical_cols, numerical_cols
 
     def step7_fill_categorical_missing(self, categorical_cols):
         """Step 7: Fill categorical data with mode values grouped by same Diagnosis"""
         print(f"\nStep 7: Fill categorical data missing values")
         print("-" * 40)
-
         if'Diagnosis' not in self.processed_data.columns:
             self.log_step("Categorical Data Filling", "Diagnosis column not found")
             return
-
         total_filled = 0
-
         for col in categorical_cols:
             missing_count = self.processed_data[col].isnull().sum()
             if missing_count > 0:
                 print(f"Processing categorical column {col}, missing values: {missing_count}")
-
                 # Fill by Diagnosis groups
                 for diagnosis in self.processed_data['Diagnosis'].unique():
-                    if pd.isna(diagnosis):
-                        continue
-
                     # Find rows in this diagnosis group with missing values in this column
                     mask = (self.processed_data['Diagnosis'] == diagnosis) & (self.processed_data[col].isnull())
-
-                    if mask.sum() > 0:
-                        # Calculate mode for this diagnosis group
-                        group_data = self.processed_data[
-                            (self.processed_data['Diagnosis'] == diagnosis) &
-                            (self.processed_data[col].notnull())
-                            ][col]
-
-                        if len(group_data) > 0:
-                            group_mode = group_data.mode()
-                            if len(group_mode) > 0:
-                                self.processed_data.loc[mask, col] = group_mode.iloc[0]
-                                total_filled += mask.sum()
-
+                    # Calculate mode for this diagnosis group
+                    group_data = self.processed_data[
+                        (self.processed_data['Diagnosis'] == diagnosis) &
+                        (self.processed_data[col].notnull())
+                        ][col]
+                    if len(group_data) > 0:
+                        group_mode = group_data.mode()
+                        if len(group_mode) > 0:
+                            self.processed_data.loc[mask, col] = group_mode.iloc[0]
+                            total_filled += mask.sum()
                 # If still missing values, fill with global mode
                 remaining_missing = self.processed_data[col].isnull().sum()
                 if remaining_missing > 0:
@@ -281,38 +202,27 @@ class AppendicitisPreprocessor:
         """Step 8: Fill numerical data with mean values grouped by same Diagnosis"""
         print(f"\nStep 8: Fill numerical data missing values")
         print("-" * 40)
-
-        if 'Diagnosis' not in self.processed_data.columns:
-            self.log_step("Numerical Data Filling", "Diagnosis column not found")
-            return
-
         total_filled = 0
-
         for col in numerical_cols:
             missing_count = self.processed_data[col].isnull().sum()
             if missing_count > 0:
                 print(f"Processing numerical column {col}, missing values: {missing_count}")
-
                 # Fill by Diagnosis groups
                 for diagnosis in self.processed_data['Diagnosis'].unique():
                     if pd.isna(diagnosis):
                         continue
-
                     mask = (self.processed_data['Diagnosis'] == diagnosis) & (self.processed_data[col].isnull())
-
                     if mask.sum() > 0:
                         # Calculate mean for this diagnosis group
                         group_data = self.processed_data[
                             (self.processed_data['Diagnosis'] == diagnosis) &
                             (self.processed_data[col].notnull())
                             ][col]
-
                         if len(group_data) > 0:
                             group_mean = group_data.mean()
                             if not pd.isna(group_mean):
                                 self.processed_data.loc[mask, col] = group_mean
                                 total_filled += mask.sum()
-
                 # If still missing values, fill with global mean
                 remaining_missing = self.processed_data[col].isnull().sum()
                 if remaining_missing > 0:
@@ -320,26 +230,21 @@ class AppendicitisPreprocessor:
                     if not pd.isna(global_mean):
                         self.processed_data[col].fillna(global_mean, inplace=True)
                         total_filled += remaining_missing
-
         self.log_step("Numerical Data Filling", f"Filled {total_filled} numerical missing values grouped by Diagnosis")
 
     def step9_label_encode_categorical(self, categorical_cols):
         """Step 9: Label encode categorical data"""
         print(f"\nStep 9: Label encode categorical data")
         print("-" * 40)
-
         # Exclude target variables and special columns
         target_cols = ['US_Number']
         encode_cols = [col for col in categorical_cols if col not in target_cols]
-
         if encode_cols:
             print(f"Columns to encode: {encode_cols}")
-
             encoded_count = 0
             for col in encode_cols:
                 if self.processed_data[col].dtype == 'object':
                     le = LabelEncoder()
-
                     # Handle missing values
                     non_null_data = self.processed_data[col].dropna()
                     if len(non_null_data) > 0:
@@ -522,10 +427,10 @@ class AppendicitisPreprocessor:
         # US_Number column remains unchanged (skip processing)
         self.step4_fill_bmi_mean()
         self.step5_knn_fill_height_weight()
-        self.step6_remove_length_of_stay()
+        self.step6_remove_non_relative_cols()
 
         # 4. Identify data types
-        categorical_cols, numerical_cols, date_cols = self.identify_column_types()
+        categorical_cols, numerical_cols = self.identify_column_types()
 
         # 5. Fill missing values
         self.step7_fill_categorical_missing(categorical_cols)
