@@ -16,11 +16,9 @@ warnings.filterwarnings('ignore')
 milliseconds = int(round(time.time() * 1000))
 
 
-
-
-class TabNetMultiTargetTrainer:
+class TabNetSingleSplitTrainer:
     def __init__(self, data_path):
-        """Initialize TabNet Multi-Target Trainer"""
+        """Initialize TabNet Single Split Trainer - Direct Train/Test Split"""
         self.data_path = data_path
         self.data = None
         self.target_columns = ['Diagnosis', 'Severity', 'Management']
@@ -35,7 +33,7 @@ class TabNetMultiTargetTrainer:
     def load_and_prepare_data(self):
         """Load and prepare the data"""
         print("=" * 80)
-        print("LOADING APPENDICITIS DATA FOR MULTI-TARGET PREDICTION")
+        print("LOADING APPENDICITIS DATA FOR SINGLE SPLIT TRAINING")
         print("=" * 80)
 
         try:
@@ -162,8 +160,8 @@ class TabNetMultiTargetTrainer:
 
     def create_stratified_split_with_rare_classes(self, X, targets_encoded, test_size=1 / 3):
         """Create stratified split handling rare classes in Management"""
-        print(f"\nCustom Stratified Splitting:")
-        print("-" * 35)
+        print(f"\nCustom Stratified Splitting (Single Split):")
+        print("-" * 45)
 
         # Get Management target for stratification strategy
         y_management = targets_encoded['Management']
@@ -265,25 +263,11 @@ class TabNetMultiTargetTrainer:
         print(f"\nCreating TabNet model for {target_name}:")
         print("-" * 30)
 
-        # Adjust parameters based on target complexity
-        if target_name == 'Diagnosis':
-            # Binary classification - simpler model
-            config = {
-                'n_d': 64, 'n_a': 64, 'n_steps': 6, 'gamma': 1.3,
-                'lambda_sparse': 1e-3
-            }
-        elif target_name == 'Severity':
-            # Multi-class with moderate complexity
-            config = {
-                'n_d': 64, 'n_a': 64, 'n_steps': 6, 'gamma': 1.3,
-                'lambda_sparse': 1e-3
-            }
-        else:  # Management
-            # Most complex with rare classes
-            config = {
-                'n_d': 64, 'n_a': 64, 'n_steps': 6, 'gamma': 1.3,
-                'lambda_sparse': 1e-3
-            }
+        # Unified configuration for all targets (from original script)
+        config = {
+            'n_d': 64, 'n_a': 64, 'n_steps': 6, 'gamma': 1.3,
+            'lambda_sparse': 1e-3
+        }
 
         tabnet_params = {
             'n_d': config['n_d'],
@@ -298,7 +282,7 @@ class TabNetMultiTargetTrainer:
             'mask_type': 'entmax',
             'scheduler_params': {"step_size": 40, "gamma": 0.85},
             'scheduler_fn': torch.optim.lr_scheduler.StepLR,
-            'seed': 42,
+            'seed': 48,
             'verbose': 1,
             'device_name': str(self.device)
         }
@@ -378,7 +362,7 @@ class TabNetMultiTargetTrainer:
                         n_val = max(1, int(n_cls_samples * val_size))
                         n_train = n_cls_samples - n_val
 
-                        np.random.seed(42)
+                        np.random.seed(48)
                         shuffled_indices = np.random.permutation(cls_indices)
                         train_indices.extend(shuffled_indices[:n_train])
                         val_indices.extend(shuffled_indices[n_train:])
@@ -413,13 +397,13 @@ class TabNetMultiTargetTrainer:
             print(f"\nOnly one class in training set - no class weighting applied")
             class_weights = None
 
-        # Adjust training parameters based on target
+        # Adjust training parameters based on target (from original script)
         if target_name == 'Management':
             # More epochs for complex/imbalanced target
             max_epochs = 250
             patience = 25
             batch_size = 8  # Smaller for rare classes
-            virtual_batch_size =4
+            virtual_batch_size = 4
         elif target_name == 'Severity':
             max_epochs = 150
             patience = 25
@@ -429,7 +413,8 @@ class TabNetMultiTargetTrainer:
             max_epochs = 150
             patience = 25
             batch_size = 8
-            virtual_batch_size=4
+            virtual_batch_size = 4
+
         print(f"\nTraining parameters:")
         print(f"  Max epochs: {max_epochs}")
         print(f"  Patience: {patience}")
@@ -461,7 +446,7 @@ class TabNetMultiTargetTrainer:
             max_epochs=max_epochs,
             patience=patience,
             batch_size=batch_size,
-            virtual_batch_size=4,
+            virtual_batch_size=virtual_batch_size,
             num_workers=0,
             drop_last=drop_last  # This ensures no singleton batches
         )
@@ -539,7 +524,7 @@ class TabNetMultiTargetTrainer:
         print(f"\nCreating comprehensive visualizations...")
 
         fig, axes = plt.subplots(3, 3, figsize=(20, 18))
-        fig.suptitle('TabNet Multi-Target Prediction Results', fontsize=16, fontweight='bold')
+        fig.suptitle('TabNet Single Split Training Results', fontsize=16, fontweight='bold')
 
         for idx, target in enumerate(self.target_columns):
             if target not in self.results:
@@ -603,7 +588,7 @@ class TabNetMultiTargetTrainer:
                              f'{value:.4f}', ha='center', va='bottom', fontweight='bold')
 
         plt.tight_layout()
-        filename = f'../../results/tabnet_multi_target_results_{milliseconds}.png'
+        filename = f'../../results/tabnet_single_split_results_{milliseconds}.png'
         plt.savefig(filename, dpi=300, bbox_inches='tight')
         plt.show()
 
@@ -623,11 +608,12 @@ class TabNetMultiTargetTrainer:
                     'Accuracy': results['accuracy'],
                     'ROC_AUC': results['auc_score'] if results['auc_score'] else 'N/A',
                     'Test_Samples': len(results['y_true']),
-                    'Classes': len(results['unique_classes'])
+                    'Classes': len(results['unique_classes']),
+                    'Timestamp': milliseconds
                 })
 
         summary_df = pd.DataFrame(summary_data)
-        summary_df.to_csv(f'../../output/tabnet_multi_target_summary_{milliseconds}.csv', index=False)
+        summary_df.to_csv(f'../../output/tabnet_single_split_summary_{milliseconds}.csv', index=False)
 
         # Save detailed results for each target
         for target in self.target_columns:
@@ -647,100 +633,121 @@ class TabNetMultiTargetTrainer:
                         if i < results['y_pred_proba'].shape[1]:
                             pred_df[f'Prob_{class_name}'] = results['y_pred_proba'][:, i]
 
-                pred_df.to_csv(f'../../output/tabnet_{target.lower()}_predictions_{milliseconds}.csv', index=False)
+                pred_df.to_csv(f'../../output/tabnet_single_split_{target.lower()}_predictions_{milliseconds}.csv', index=False)
 
                 # Confusion matrix
                 cm_df = pd.DataFrame(results['confusion_matrix'],
                                      index=results['target_names'],
                                      columns=results['target_names'])
-                cm_df.to_csv(f'../../output/tabnet_{target.lower()}_confusion_matrix_{milliseconds}.csv')
+                cm_df.to_csv(f'../../output/tabnet_single_split_{target.lower()}_confusion_matrix_{milliseconds}.csv')
 
         print(f"✓ Results saved:")
-        print(f"  - tabnet_multi_target_summary_{milliseconds}.csv")
+        print(f"  - tabnet_single_split_summary_{milliseconds}.csv")
         for target in self.target_columns:
             if target in self.results:
-                print(f"  - tabnet_{target.lower()}_predictions_{milliseconds}.csv")
-                print(f"  - tabnet_{target.lower()}_confusion_matrix_{milliseconds}.csv")
+                print(f"  - tabnet_single_split_{target.lower()}_predictions_{milliseconds}.csv")
+                print(f"  - tabnet_single_split_{target.lower()}_confusion_matrix_{milliseconds}.csv")
 
     def run_complete_training(self):
-        """Run complete multi-target training pipeline"""
-        print("Starting TabNet Multi-Target Training Pipeline")
+        """Run complete single split training pipeline"""
+        print("Starting TabNet Single Split Training Pipeline")
         print("=" * 70)
+        print("Configuration:")
+        print("- Single Train/Test Split (No Cross-Validation)")
+        print("- Ratio: 2:1 (train:test)")
+        print("- Separate models for each target")
+        print("- Custom stratification for rare classes")
+        print()
 
         # Load and prepare data
         if not self.load_and_prepare_data():
+            print("✗ Data preparation failed")
             return False
 
         # Preprocess data
         X, targets_encoded = self.preprocess_data()
 
-        # Create custom stratified split
+        # Create single stratified split
         X_train, X_test, targets_train, targets_test = self.create_stratified_split_with_rare_classes(
             X, targets_encoded
         )
 
         # Train models for each target
+        print(f"\n{'=' * 70}")
+        print("TRAINING PHASE - Single Split")
+        print('=' * 70)
+
         for target in self.target_columns:
             y_train = targets_train[target]
             y_test = targets_test[target]
 
-            # Train model
-            model, history = self.train_target_model(X_train, y_train, X_test, y_test, target)
+            try:
+                # Train model
+                model, history = self.train_target_model(X_train, y_train, X_test, y_test, target)
 
-            # Evaluate model
-            self.evaluate_target_model(X_test, y_test, target)
+                # Evaluate model
+                self.evaluate_target_model(X_test, y_test, target)
+
+            except Exception as e:
+                print(f"✗ Error training {target}: {e}")
+                continue
 
         # Create visualizations
-        self.create_comprehensive_visualization()
+        if self.results:
+            self.create_comprehensive_visualization()
 
-        # Save results
-        self.save_all_results()
+            # Save results
+            self.save_all_results()
 
-        # Final summary
-        print(f"\n{'=' * 70}")
-        print("MULTI-TARGET TRAINING COMPLETED!")
-        print("=" * 70)
+            # Final summary
+            print(f"\n{'=' * 70}")
+            print("SINGLE SPLIT TRAINING COMPLETED!")
+            print("=" * 70)
 
-        print(f"\nFinal Results Summary:")
-        for target in self.target_columns:
-            if target in self.results:
-                acc = self.results[target]['accuracy']
-                auc = self.results[target]['auc_score']
-                n_classes = len(self.results[target]['unique_classes'])
-                print(f"- {target}: Accuracy={acc:.4f}, Classes={n_classes}",
-                      end="")
-                if auc:
-                    print(f", AUC={auc:.4f}")
-                else:
-                    print()
+            print(f"\nFinal Results Summary:")
+            print(f"Training samples: {len(X_train)}")
+            print(f"Test samples: {len(X_test)}")
+            print(f"Features used: {len(self.feature_columns)}")
+            print(f"Timestamp: {milliseconds}")
 
-        print(f"\nFeatures used: {len(self.feature_columns)}")
-        print(f"Training samples: {len(X_train)}")
-        print(f"Test samples: {len(X_test)}")
+            for target in self.target_columns:
+                if target in self.results:
+                    acc = self.results[target]['accuracy']
+                    auc = self.results[target]['auc_score']
+                    n_classes = len(self.results[target]['unique_classes'])
+                    print(f"- {target}: Accuracy={acc:.4f}, Classes={n_classes}", end="")
+                    if auc:
+                        print(f", AUC={auc:.4f}")
+                    else:
+                        print()
 
-        return True
+            return True
+        else:
+            print("✗ No successful training completed")
+            return False
 
 
 def main():
     """Main execution function"""
-    print("TabNet Multi-Target Prediction Training")
+    print("TabNet Single Split Multi-Target Training")
     print("=" * 50)
     print("Targets: Diagnosis, Severity, Management")
-    print("Strategy: Separate models for each target")
+    print("Strategy: Single train/test split (no k-fold)")
     print("Special handling: Management rare classes")
     print("Split ratio: 2:1 (train:test)")
     print()
 
     # Create trainer
-    trainer = TabNetMultiTargetTrainer('../../data/appendicitis/processed_appendicitis_data_final.xlsx')
+    trainer = TabNetSingleSplitTrainer('../../data/appendicitis/processed_appendicitis_data_final.xlsx')
 
     # Run training
     success = trainer.run_complete_training()
 
     if success:
-        print("\n✓ Multi-target training completed successfully!")
+        print("\n✓ Single split training completed successfully!")
+        print("Check generated files for detailed results and visualizations.")
     else:
-        print("\n✗ Multi-target training failed!")
+        print("\n✗ Single split training failed!")
 
 
 if __name__ == "__main__":
