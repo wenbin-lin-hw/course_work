@@ -401,17 +401,14 @@ class TabNetMultiTargetTrainer:
         # Calculate class weights for classes present in training data
         unique_train_fit, counts_train_fit = np.unique(y_train_fit, return_counts=True)
 
-        if len(unique_train_fit) > 1:
-            class_weights = compute_class_weight('balanced',
-                                                 classes=unique_train_fit,
-                                                 y=y_train_fit)
-            print(f"\nClass weights:")
-            for cls, weight in zip(unique_train_fit, class_weights):
-                class_name = self.label_encoders[target_name].classes_[cls]
-                print(f"  '{class_name}': {weight:.3f}")
-        else:
-            print(f"\nOnly one class in training set - no class weighting applied")
-            class_weights = None
+
+        class_weights = compute_class_weight('balanced',
+                                             classes=unique_train_fit,
+                                             y=y_train_fit)
+        print(f"\nClass weights:")
+        for cls, weight in zip(unique_train_fit, class_weights):
+            class_name = self.label_encoders[target_name].classes_[cls]
+            print(f"  '{class_name}': {weight:.3f}")
 
         # Adjust training parameters based on target
         if target_name == 'Management':
@@ -435,12 +432,12 @@ class TabNetMultiTargetTrainer:
         print(f"  Patience: {patience}")
         print(f"  Batch size: {batch_size}")
 
-        # Final check on data size before training
-        if len(X_train_fit) < batch_size:
-            print(f"Warning: Training data ({len(X_train_fit)}) smaller than batch size ({batch_size})")
-            batch_size = max(2, len(X_train_fit))
-            virtual_batch_size = max(2, batch_size // 2)
-            print(f"Adjusted batch_size to {batch_size}, virtual_batch_size to {virtual_batch_size}")
+        # # Final check on data size before training
+        # if len(X_train_fit) < batch_size:
+        #     print(f"Warning: Training data ({len(X_train_fit)}) smaller than batch size ({batch_size})")
+        #     batch_size = max(2, len(X_train_fit))
+        #     virtual_batch_size = max(2, batch_size // 2)
+        #     print(f"Adjusted batch_size to {batch_size}, virtual_batch_size to {virtual_batch_size}")
 
         # Ensure we don't have singleton batches with drop_last=True
         drop_last = True if len(X_train_fit) > batch_size else False
