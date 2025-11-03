@@ -78,6 +78,38 @@ class Controller:
         self.fitness_values = []
         self.fitness = 0
 
+    def simple_forward_fitness(forward_distance, backward_distance):
+        """
+        简化的前向适应度函数
+
+        这是一个最简单的版本，适合快速测试
+
+        Args:
+            left_speed: 左轮速度 [-1, 1]
+            right_speed: 右轮速度 [-1, 1]
+            forward_distance: 前向移动距离
+            backward_distance: 后退距离
+
+        Returns:
+            float: 适应度分数
+        """
+        # 1. 前向距离奖励
+        fitness = 5.0 * forward_distance
+
+        # 2. 速度奖励（鼓励快速移动）
+        avg_speed = (abs(self.velocity_left) + abs(self.velocity_right)) / 2.0
+        fitness += 2.0 * avg_speed
+
+        # 3. 直线奖励（左右轮速度相近）
+        speed_diff = abs(left_speed - right_speed)
+        straightness = 1.0 - (speed_diff / 2.0)
+        fitness += 1.0 * straightness
+
+        # 4. 后退惩罚
+        fitness -= 3.0 * backward_distance
+
+        return max(0.0, fitness)
+
     def check_for_new_genes(self):
         if(self.flagMessage == True):
                 # Split the list based on the number of layers of your network
@@ -255,7 +287,8 @@ class Controller:
             # Calculate the fitnes value of the current iteration
             self.calculate_fitness()
             
-            # End of the iteration 
+            # End of the iteration
+
             
 if __name__ == "__main__":
     # Call Robot function to initialize the robot
