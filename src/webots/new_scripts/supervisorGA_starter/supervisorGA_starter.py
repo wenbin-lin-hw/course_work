@@ -4,6 +4,7 @@ from controller import Display
 
 import numpy,struct
 import ga,os
+import sys
 
 
 class SupervisorGA:
