@@ -86,6 +86,9 @@ class Controller:
         self.collision_count = 0
         self.near_collision_count = 0
         self.time_near_obstacle = 0
+        # Line following tracking
+        self.consecutive_on_line = 0
+        self.consecutive_off_line = 0
         
         # Fitness value (initialization fitness parameters once)
         self.fitness_values = []
