@@ -19,7 +19,7 @@ class Controller:
         self.number_input_layer = 11 #8 proximity + 3 ground sensors
         # Example with one hidden layers: self.number_hidden_layer = [5]
         # Example with two hidden layers: self.number_hidden_layer = [7,5]
-        self.number_hidden_layer = [?,?]
+        self.number_hidden_layer = [8,6]
         self.number_output_layer = 2 
         
         # Create a list with the number of neurons per layer
@@ -78,37 +78,364 @@ class Controller:
         self.fitness_values = []
         self.fitness = 0
 
-    def simple_forward_fitness(forward_distance, backward_distance):
+    def forwardFitness(self):
         """
-        简化的前向适应度函数
-
-        这是一个最简单的版本，适合快速测试
-
-        Args:
-            left_speed: 左轮速度 [-1, 1]
-            right_speed: 右轮速度 [-1, 1]
-            forward_distance: 前向移动距离
-            backward_distance: 后退距离
-
-        Returns:
-            float: 适应度分数
+        Fitness function for forward movement behavior
+        Objective: Move as fast as possible in forward direction
+        Rewards: High speed, straight movement, continuous forward motion
+        Penalties: Stopping, turning, backward movement, collisions
         """
-        # 1. 前向距离奖励
-        fitness = 5.0 * forward_distance
 
-        # 2. 速度奖励（鼓励快速移动）
-        avg_speed = (abs(self.velocity_left) + abs(self.velocity_right)) / 2.0
-        fitness += 2.0 * avg_speed
+        # 1. SPEED COMPONENT - Reward high forward speed
+        avg_speed = (abs(self.velocity_left) + abs(self.velocity_right)) / (2 * self.max_speed)
+        speed_fitness = avg_speed * 100  # 0-100 points
 
-        # 3. 直线奖励（左右轮速度相近）
-        speed_diff = abs(left_speed - right_speed)
-        straightness = 1.0 - (speed_diff / 2.0)
-        fitness += 1.0 * straightness
+        # 2. FORWARD DIRECTION - Both wheels must move forward
+        if self.velocity_left > 0 and self.velocity_right > 0:
+            forward_bonus = 50
+            # Extra bonus for high speed forward
+            if avg_speed > 0.8:
+                forward_bonus += 25
+        elif self.velocity_left < 0 or self.velocity_right < 0:
+            forward_bonus = -75  # Heavy penalty for backward
+        else:
+            forward_bonus = -25  # Penalty for stopping
 
-        # 4. 后退惩罚
-        fitness -= 3.0 * backward_distance
+        # 3. STRAIGHT MOVEMENT - Minimize turning
+        speed_diff = abs(self.velocity_left - self.velocity_right) / self.max_speed
+        straight_bonus = (1 - speed_diff) * 50  # 0-50 points
 
-        return max(0.0, fitness)
+        # 4. COLLISION AVOIDANCE - Penalty for obstacles
+        front_sensors = [
+            self.proximity_sensors[0].getValue(),  # Front-right
+            self.proximity_sensors[1].getValue(),  # Front-right-side
+            self.proximity_sensors[6].getValue(),  # Front-left-side
+            self.proximity_sensors[7].getValue()  # Front-left
+        ]
+        max_front_proximity = max(front_sensors)
+
+        if max_front_proximity > 3000:  # Very close to obstacle
+            collision_penalty = 100
+        elif max_front_proximity > 2000:
+            collision_penalty = 50
+        else:
+            collision_penalty = (max_front_proximity / 4096) * 30
+
+        # 5. ACTIVITY PENALTY - Discourage inactivity
+        if avg_speed < 0.05:
+            activity_penalty = 50
+        else:
+            activity_penalty = 0
+
+        # Calculate total fitness
+        fitness = (
+                speed_fitness +
+                forward_bonus +
+                straight_bonus -
+                collision_penalty -
+                activity_penalty
+        )
+
+        fitness = max(0, fitness)
+
+        return fitness
+
+
+    def followLineFitness(self):
+        """
+        Fitness function for line following behavior
+        Objective: Stay on the black track line and follow it smoothly
+        Rewards: Staying on line, moderate speed, smooth following
+        Penalties: Going off track, stopping, erratic movement
+        """
+
+        # 1. LINE DETECTION - Read ground sensors
+        left_ground = self.left_ir.getValue()
+        center_ground = self.center_ir.getValue()
+        right_ground = self.right_ir.getValue()
+
+        # Normalize (0 = black/line, 1000 = white/off-line)
+        # Assuming sensor range 0-1000
+
+        # 2. ON-LINE REWARD - Center sensor should detect line
+        if center_ground < 400:  # On black line
+            center_on_line = 100
+        elif center_ground < 600:  # Partially on line
+            center_on_line = 50
+        else:  # Off line
+            center_on_line = 0
+
+        # 3. CENTERING BONUS - Robot centered on line
+        # Best case: center is dark, sides are light (or all dark for wide lines)
+        if center_ground < 400:
+            if left_ground < 500 and right_ground < 500:
+                # All sensors on line (good for wide lines)
+                centering_bonus = 50
+            elif left_ground > 600 and right_ground > 600:
+                # Only center on line (perfectly centered on narrow line)
+                centering_bonus = 75
+            else:
+                # Partially centered
+                centering_bonus = 25
+        else:
+            centering_bonus = 0
+
+        # 4. LINE TRACKING QUALITY - Penalize being off track
+        ground_avg = (left_ground + center_ground + right_ground) / 3
+        if ground_avg < 500:  # Mostly on line
+            tracking_quality = 50
+        elif ground_avg < 700:  # Partially on line
+            tracking_quality = 25
+        else:  # Completely off line
+            tracking_quality = -50
+
+        # 5. SPEED COMPONENT - Moderate speed is good for line following
+        avg_speed = (abs(self.velocity_left) + abs(self.velocity_right)) / (2 * self.max_speed)
+
+        # Optimal speed for line following: 0.4-0.7 of max_speed
+        if 0.4 <= avg_speed <= 0.7:
+            speed_fitness = 50
+        elif 0.2 <= avg_speed < 0.4:
+            speed_fitness = 30
+        elif avg_speed > 0.7:
+            speed_fitness = 20  # Too fast may lose line
+        else:
+            speed_fitness = -25  # Too slow or stopped
+
+        # 6. SMOOTH MOVEMENT - Reward smooth steering
+        speed_diff = abs(self.velocity_left - self.velocity_right) / self.max_speed
+
+        # Some turning is expected for line following
+        if speed_diff < 0.3:  # Smooth turning
+            smooth_bonus = 30
+        elif speed_diff < 0.5:
+            smooth_bonus = 15
+        else:  # Too much turning (erratic)
+            smooth_bonus = -20
+
+        # 7. FORWARD DIRECTION - Should move forward
+        if self.velocity_left > 0 and self.velocity_right > 0:
+            forward_bonus = 25
+        else:
+            forward_bonus = -25
+
+        # Calculate total fitness
+        fitness = (
+                center_on_line +
+                centering_bonus +
+                tracking_quality +
+                speed_fitness +
+                smooth_bonus +
+                forward_bonus
+        )
+
+        fitness = max(0, fitness)
+
+        return fitness
+
+
+    def avoidCollisionFitness(self):
+        """
+        Fitness function for collision avoidance behavior
+        Objective: Navigate environment while avoiding obstacles
+        Rewards: Movement with clear space, successful obstacle avoidance
+        Penalties: Getting close to obstacles, collisions, stopping
+        """
+
+        # 1. READ ALL PROXIMITY SENSORS
+        proximity_values = [self.proximity_sensors[i].getValue() for i in range(8)]
+
+        # Sensor layout (e-puck):
+        # 0: front-right, 1: right-front, 2: right, 3: right-back
+        # 4: back, 5: left-back, 6: left, 7: left-front
+
+        front_sensors = [proximity_values[0], proximity_values[7]]  # Front
+        side_sensors = [proximity_values[1], proximity_values[2],
+                        proximity_values[5], proximity_values[6]]  # Sides
+        back_sensors = [proximity_values[3], proximity_values[4]]  # Back
+
+        max_proximity = max(proximity_values)
+        avg_proximity = sum(proximity_values) / len(proximity_values)
+        max_front = max(front_sensors)
+
+        # 2. CLEARANCE REWARD - Reward for maintaining distance from obstacles
+        if max_proximity < 500:  # Very clear space
+            clearance_reward = 100
+        elif max_proximity < 1000:  # Good clearance
+            clearance_reward = 75
+        elif max_proximity < 2000:  # Moderate clearance
+            clearance_reward = 50
+        elif max_proximity < 3000:  # Close to obstacle
+            clearance_reward = 20
+        else:  # Very close - danger!
+            clearance_reward = -50
+
+        # 3. COLLISION PENALTY - Heavy penalty for being too close
+        if max_proximity > 3500:  # Imminent collision
+            collision_penalty = 150
+        elif max_proximity > 3000:  # Very close
+            collision_penalty = 100
+        elif max_proximity > 2500:  # Close
+            collision_penalty = 50
+        else:
+            collision_penalty = 0
+
+        # 4. MOVEMENT REWARD - Should keep moving
+        avg_speed = (abs(self.velocity_left) + abs(self.velocity_right)) / (2 * self.max_speed)
+
+        if avg_speed > 0.5:
+            movement_reward = 75
+        elif avg_speed > 0.3:
+            movement_reward = 50
+        elif avg_speed > 0.1:
+            movement_reward = 25
+        else:
+            movement_reward = -25  # Penalty for stopping
+
+        # 5. AVOIDANCE BEHAVIOR - Reward appropriate reactions to obstacles
+        # If obstacle in front, robot should turn (differential speed)
+        if max_front > 2000:  # Obstacle detected in front
+            speed_diff = abs(self.velocity_left - self.velocity_right) / self.max_speed
+            if speed_diff > 0.3:  # Robot is turning to avoid
+                avoidance_bonus = 50
+            else:  # Not turning enough
+                avoidance_bonus = -25
+        else:  # No front obstacle
+            avoidance_bonus = 25  # Bonus for clear navigation
+
+        # 6. EXPLORATION BONUS - Reward for moving in open space
+        if avg_proximity < 1000 and avg_speed > 0.4:
+            exploration_bonus = 50
+        else:
+            exploration_bonus = 0
+
+        # 7. FORWARD PREFERENCE - Prefer forward movement
+        if self.velocity_left > 0 and self.velocity_right > 0:
+            forward_bonus = 25
+        else:
+            forward_bonus = 0
+
+        # Calculate total fitness
+        fitness = (
+                clearance_reward +
+                movement_reward +
+                avoidance_bonus +
+                exploration_bonus +
+                forward_bonus -
+                collision_penalty
+        )
+
+        fitness = max(0, fitness)
+
+        return fitness
+
+
+    def spinningFitness(self):
+        """
+        Fitness function for spinning/rotation behavior
+        Objective: Rotate in place or perform circular motion
+        Rewards: Rotational movement, consistent spinning speed
+        Penalties: Forward movement, stopping, inconsistent rotation
+        """
+
+        # 1. DIFFERENTIAL SPEED - Wheels should move in opposite or highly differential speeds
+        speed_diff = abs(self.velocity_left - self.velocity_right)
+
+        # For spinning in place: wheels should move in opposite directions
+        opposite_direction = (self.velocity_left * self.velocity_right) < 0
+
+        if opposite_direction:
+            # Perfect spin in place
+            spin_quality = 100
+            # Reward higher differential speed
+            spin_speed_bonus = (speed_diff / (2 * self.max_speed)) * 50
+        else:
+            # Circular motion (both forward but different speeds)
+            if speed_diff > 0.3 * self.max_speed:
+                spin_quality = 60
+                spin_speed_bonus = (speed_diff / (2 * self.max_speed)) * 30
+            else:
+                spin_quality = 20
+                spin_speed_bonus = 0
+
+        # 2. ROTATION SPEED - Reward active rotation
+        avg_abs_speed = (abs(self.velocity_left) + abs(self.velocity_right)) / 2
+
+        if avg_abs_speed > 0.5 * self.max_speed:
+            rotation_speed_reward = 50
+        elif avg_abs_speed > 0.3 * self.max_speed:
+            rotation_speed_reward = 30
+        elif avg_abs_speed > 0.1 * self.max_speed:
+            rotation_speed_reward = 15
+        else:
+            rotation_speed_reward = -25  # Penalty for not moving
+
+        # 3. CONSISTENCY - Reward consistent spinning behavior
+        # Track speed history for consistency check
+        if not hasattr(self, 'spin_history'):
+            self.spin_history = []
+
+        current_spin_rate = self.velocity_left - self.velocity_right
+        self.spin_history.append(current_spin_rate)
+
+        # Keep only recent history
+        if len(self.spin_history) > 10:
+            self.spin_history.pop(0)
+
+        # Check consistency
+        if len(self.spin_history) >= 5:
+            spin_variance = sum([(x - current_spin_rate) ** 2 for x in self.spin_history[-5:]]) / 5
+            if spin_variance < 0.1:  # Consistent spinning
+                consistency_bonus = 40
+            elif spin_variance < 0.3:
+                consistency_bonus = 20
+            else:
+                consistency_bonus = 0
+        else:
+            consistency_bonus = 0
+
+        # 4. ANTI-FORWARD PENALTY - Penalize moving straight forward
+        if abs(self.velocity_left - self.velocity_right) < 0.2 * self.max_speed:
+            # Moving too straight
+            straight_penalty = 50
+        else:
+            straight_penalty = 0
+
+        # 5. DIRECTION CONSISTENCY - Reward spinning in same direction
+        if not hasattr(self, 'spin_direction'):
+            self.spin_direction = None
+
+        current_direction = 1 if (self.velocity_left - self.velocity_right) > 0 else -1
+
+        if self.spin_direction is None:
+            self.spin_direction = current_direction
+            direction_bonus = 0
+        elif self.spin_direction == current_direction:
+            direction_bonus = 30  # Consistent direction
+        else:
+            direction_bonus = -20  # Changed direction
+            self.spin_direction = current_direction
+
+        # 6. ACTIVITY REWARD - Must be actively spinning
+        if avg_abs_speed < 0.05:
+            activity_penalty = 50
+        else:
+            activity_penalty = 0
+
+        # Calculate total fitness
+        fitness = (
+                spin_quality +
+                spin_speed_bonus +
+                rotation_speed_reward +
+                consistency_bonus +
+                direction_bonus -
+                straight_penalty -
+                activity_penalty
+        )
+
+        fitness = max(0, fitness)
+
+        return fitness
 
     def check_for_new_genes(self):
         if(self.flagMessage == True):
@@ -166,16 +493,16 @@ class Controller:
         
         ### Define the fitness function to increase the speed of the robot and 
         ### to encourage the robot to move forward only
-        forwardFitness = ?
+        forwardFitness = self.forwardFitness()
         
         ### Define the fitness function to encourage the robot to follow the line
-        followLineFitness = ?
+        followLineFitness = self.followLineFitness()
                 
         ### Define the fitness function to avoid collision
-        avoidCollisionFitness = ?
+        avoidCollisionFitness = self.avoidCollisionFitness()
         
         ### Define the fitness function to avoid spining behaviour
-        spinningFitness = ?
+        spinningFitness = self.spinningFitness()
          
         ### Define the fitness function of this iteration which should be a combination of the previous functions         
         combinedFitness = forwardFitness + followLineFitness + avoidCollisionFitness + spinningFitness
