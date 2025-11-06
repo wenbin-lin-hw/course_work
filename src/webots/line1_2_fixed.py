@@ -265,12 +265,12 @@ class Controller:
                     # Continue searching
                     if self.obstacle_side in ['front_left', 'left']:
                         # Turn slightly right while moving forward
-                        self.velocity_left = 0.7
-                        self.velocity_right = 0.5
-                    else:
-                        # Turn slightly left while moving forward
                         self.velocity_left = 0.5
                         self.velocity_right = 0.7
+                    else:
+                        # Turn slightly left while moving forward
+                        self.velocity_left = 0.7
+                        self.velocity_right = 0.5
 
                     # Timeout: if can't find line
                     if self.search_counter >= self.SEARCH_DURATION:
