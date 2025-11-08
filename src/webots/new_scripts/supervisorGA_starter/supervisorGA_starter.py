@@ -37,9 +37,9 @@ class SupervisorGA:
         self.emitterData = ""
         
         ### Define here the GA Parameters
-        self.num_generations = 50
-        self.num_population = 30
-        self.num_elite = 3
+        self.num_generations = 300
+        self.num_population = 50
+        self.num_elite = 5
         
         # size of the genotype variable
         self.num_weights = 0
@@ -75,6 +75,7 @@ class SupervisorGA:
             # Webots 2023: 
             self.receivedData = self.receiver.getString()
             typeMessage = self.receivedData[0:7]
+            print(self.receivedData)
             # Check Message 
             if(typeMessage == "weights"):
                 self.receivedWeights = self.receivedData[9:len(self.receivedData)] 
