@@ -174,7 +174,7 @@ class SupervisorGA:
             if (generation < self.num_generations - 1):
                 self.population = ga.population_reproduce(current_population,self.num_elite);
         
-        #print("All Genotypes: {}".format(self.genotypes))
+        print("All Genotypes: {}".format(self.genotypes))
         print("GA optimization terminated.\n")   
     
     
