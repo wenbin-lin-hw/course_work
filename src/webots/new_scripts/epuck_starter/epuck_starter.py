@@ -206,7 +206,11 @@ class Controller:
         3. 预防性奖励：保持安全距离
         4. 惩罚碰撞：传感器值过高严重惩罚
         """
-        proximity_sensors, left_speed, right_speed, danger_threshold=self.proximity_sensors,self.velocity_left,self.velocity_right,80
+        sensor_values = []
+        for sensor in self.proximity_sensors:
+            sensor_values.append(sensor.getValue())
+        proximity_sensors =sensor_values
+        left_speed, right_speed, danger_threshold = self.velocity_left,self.velocity_right,80
         if len(proximity_sensors) < 8:
             return 0.0
 
@@ -274,7 +278,7 @@ class Controller:
     # FITNESS FUNCTION 4: SPINNING FITNESS (PENALTY)
     # ============================================================================
 
-    def spinningitness(self) :
+    def spinningFitness(self) :
         """
         旋转惩罚函数
 
