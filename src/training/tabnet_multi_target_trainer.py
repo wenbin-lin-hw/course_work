@@ -1,8 +1,10 @@
+import pickle
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, StratifiedKFold
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score, roc_auc_score
 from sklearn.utils.class_weight import compute_class_weight
@@ -11,18 +13,27 @@ import torch.nn as nn
 from pytorch_tabnet.tab_model import TabNetClassifier
 import warnings
 import time
+from datetime import datetime
+import matplotlib
+
+# matplotlib.use("TkAgg")
 
 warnings.filterwarnings('ignore')
 milliseconds = int(round(time.time() * 1000))
-
-
+import os
 
 
 class TabNetMultiTargetTrainer:
-    def __init__(self, data_path):
-        """Initialize TabNet Multi-Target Trainer"""
+    def __init__(self, data_path=None, n_folds=5, balancing=0, remove_single_class=False):
+        """Initialize TabNet Multi-Target Trainer
+        data_path: Path to the data file
+        n_folds: Number of folds for cross-validation
+        balancing: Type of balancing to apply (0 for no balancing, 1 for balancing)
+        remove_single_class: Whether to remove classes with only one sample
+        """
         self.data_path = data_path
         self.data = None
+        self.target_column = None
         self.target_columns = ['Diagnosis', 'Severity', 'Management']
         self.exclude_columns = ['US_Performed', 'US_Number', 'Management', 'Severity', 'Diagnosis']
         self.feature_columns = None
@@ -30,7 +41,16 @@ class TabNetMultiTargetTrainer:
         self.label_encoders = {}
         self.models = {}
         self.results = {}
+        self.result = {}
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.n_folds = n_folds
+        # you can you rebalance to adjust for class imbalance if needed, set value to 1 to enable balancing
+        self.balancing = balancing
+        self.label_encoder = LabelEncoder()
+        self.model = None
+        self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.remove_single_class = remove_single_class
+        self.model_dir = "../../saved_models"
 
     def load_and_prepare_data(self):
         """Load and prepare the data"""
@@ -39,23 +59,17 @@ class TabNetMultiTargetTrainer:
         print("=" * 80)
 
         try:
-            # Try different sheet names
-            try:
-                self.data = pd.read_excel(self.data_path, sheet_name='Processed_Data')
-                print("✓ Data loaded from 'Processed_Data' sheet")
-            except:
-                self.data = pd.read_excel(self.data_path)
-                print("✓ Data loaded from default sheet")
 
+            self.data = pd.read_excel(self.data_path, sheet_name='Processed_Data')
             print(f"Original data shape: {self.data.shape}")
-
-            # Check target columns
-            missing_targets = [col for col in self.target_columns if col not in self.data.columns]
-            if missing_targets:
-                print(f"✗ Missing target columns: {missing_targets}")
-                return False
-
-            print(f"✓ All target columns found")
+            if self.remove_single_class:
+                print("\nremove_single_class tag is True")
+                print("\n Try to remove one single class of Management...")
+                management_counts = self.data['Management'].value_counts()
+                single_value_categories = management_counts[management_counts == 1].index.tolist()
+                print(f"\nthe single  categories are: {single_value_categories}")
+                print(f"\nthe number of rows needed to be deleted is : {len(single_value_categories)}")
+                self.data = self.data[~self.data['Management'].isin(single_value_categories)].copy()
 
             # Display target distributions
             print(f"\nTarget Variable Distributions:")
@@ -85,158 +99,97 @@ class TabNetMultiTargetTrainer:
 
             if final_rows < initial_rows:
                 print(f"\nRemoved {initial_rows - final_rows} rows with missing target values")
-
             print(f"Final data shape: {self.data.shape}")
-
             # Prepare feature columns
-            available_columns = set(self.data.columns)
-            exclude_set = set(self.exclude_columns)
-            existing_excluded = exclude_set.intersection(available_columns)
-
             self.feature_columns = [col for col in self.data.columns
-                                    if col not in existing_excluded]
-
+                                    if col not in self.exclude_columns]
             print(f"\nFeature Selection:")
             print(f"Total columns: {len(self.data.columns)}")
-            print(f"Excluded columns: {list(existing_excluded)}")
+            print(f"Excluded columns: {list(self.exclude_columns)}")
             print(f"Feature columns: {len(self.feature_columns)}")
-
             return True
-
         except Exception as e:
             print(f"✗ Data loading failed: {e}")
             return False
 
-    def preprocess_data(self):
-        """Preprocess features for all targets"""
-        print(f"\nData Preprocessing:")
+    def preprocess_features(self):
+        """Preprocess features for TabNet"""
+        print(f"\nFeature Preprocessing:")
         print("-" * 30)
 
-        # Extract features
+        # Get features and target
         X = self.data[self.feature_columns].copy()
+        y = self.data[self.target_column].copy()
+
         print(f"Features shape: {X.shape}")
+        print(f"Target shape: {y.shape}")
 
-        # Handle missing values in features
-        missing_counts = X.isnull().sum()
-        features_with_missing = missing_counts[missing_counts > 0]
-
-        if len(features_with_missing) > 0:
-            print(f"Handling {len(features_with_missing)} features with missing values...")
-
-            for col in X.columns:
-                if X[col].dtype in ['int64', 'float64']:
-                    X[col].fillna(X[col].median(), inplace=True)
-                else:
-                    mode_values = X[col].mode()
-                    fill_value = mode_values[0] if len(mode_values) > 0 else 'Unknown'
-                    X[col].fillna(fill_value, inplace=True)
-
-        # Encode categorical features
-        categorical_count = 0
+        # Convert categorical features to numeric
+        categorical_features = []
         for col in X.columns:
             if X[col].dtype == 'object':
+                categorical_features.append(col)
                 le = LabelEncoder()
                 X[col] = le.fit_transform(X[col].astype(str))
-                categorical_count += 1
 
-        print(f"Encoded {categorical_count} categorical features")
+        if categorical_features:
+            print(f"Encoded {len(categorical_features)} categorical features")
+
+        # Encode target variable
+        y_encoded = self.label_encoder.fit_transform(y)
+        target_mapping = dict(zip(self.label_encoder.classes_,
+                                  range(len(self.label_encoder.classes_))))
+
+        print(f"\nTarget encoding mapping:")
+        for original, encoded in target_mapping.items():
+            print(f"  {original} -> {encoded}")
 
         # Scale features
         X_scaled = self.scaler.fit_transform(X)
-        print(f"✓ Features scaled and preprocessed")
 
-        # Prepare targets with label encoding
-        targets_encoded = {}
-        for target in self.target_columns:
-            y = self.data[target].copy()
-            le = LabelEncoder()
-            targets_encoded[target] = le.fit_transform(y)
-            self.label_encoders[target] = le
+        print(f"✓ Feature preprocessing completed")
+        print(f"Final feature shape: {X_scaled.shape}")
+        print(f"Number of classes: {len(np.unique(y_encoded))}")
 
-            print(f"\n{target} encoding:")
-            for original, encoded in zip(le.classes_, range(len(le.classes_))):
-                count = np.sum(targets_encoded[target] == encoded)
-                print(f"  '{original}' -> {encoded} ({count} samples)")
+        return X_scaled, y_encoded
 
-        return X_scaled, targets_encoded
-
-    def create_stratified_split_with_rare_classes(self, X, targets_encoded, test_size=1 / 3):
+    def create_stratified_split_with_rare_classes(self, X, target_encoded, test_size=1 / 3):
         """Create stratified split handling rare classes in Management"""
         print(f"\nCustom Stratified Splitting:")
         print("-" * 35)
-
-        # Get Management target for stratification strategy
-        y_management = targets_encoded['Management']
-        unique_mgmt, counts_mgmt = np.unique(y_management, return_counts=True)
-
-        print(f"Management class distribution:")
-        for cls, count in zip(unique_mgmt, counts_mgmt):
-            class_name = self.label_encoders['Management'].classes_[cls]
-            print(f"  Class {cls} ('{class_name}'): {count} samples")
-
-        # Identify rare classes (≤2 samples)
-        rare_classes = unique_mgmt[counts_mgmt <= 2]
-        common_classes = unique_mgmt[counts_mgmt > 2]
-
-        if len(rare_classes) > 0:
+        if self.target_column == 'Management' and not self.remove_single_class:
+            # Get Management target for stratification strategy
+            unique_mgmt, counts_mgmt = np.unique(target_encoded, return_counts=True)
+            # Identify rare classes (≤2 samples)
+            rare_classes = unique_mgmt[counts_mgmt <= 2]
+            common_classes = unique_mgmt[counts_mgmt > 2]
+            # if len(rare_classes) > 0:
             print(f"\nRare classes detected: {rare_classes}")
             print(f"Common classes: {common_classes}")
-
             # Strategy: Put all rare class samples in training set
-            rare_indices = np.where(np.isin(y_management, rare_classes))[0]
-            common_indices = np.where(np.isin(y_management, common_classes))[0]
-
+            rare_indices = np.where(np.isin(target_encoded, rare_classes))[0]
+            common_indices = np.where(np.isin(target_encoded, common_classes))[0]
             print(f"Rare class samples: {len(rare_indices)} (will go to training)")
             print(f"Common class samples: {len(common_indices)} (will be split)")
-
-            if len(common_indices) == 0:
-                # All classes are rare - use simple random split
-                print("All classes are rare - using random split")
-                train_idx, test_idx = train_test_split(
-                    np.arange(len(X)), test_size=test_size, random_state=42
-                )
-            else:
-                # Split only common classes with stratification
-                y_common = y_management[common_indices]
-
-                # Check if stratification is still possible with common classes
-                unique_common, counts_common = np.unique(y_common, return_counts=True)
-                min_common_count = np.min(counts_common)
-
-                if min_common_count >= 2:
-                    # Can stratify common classes
-                    train_common_idx, test_common_idx = train_test_split(
-                        common_indices, test_size=test_size,
-                        stratify=y_common, random_state=42
-                    )
-                    print(f"Stratified split on common classes successful")
-                else:
-                    # Cannot stratify even common classes
-                    train_common_idx, test_common_idx = train_test_split(
-                        common_indices, test_size=test_size, random_state=42
-                    )
-                    print(f"Random split on common classes (stratification not possible)")
-
-                # Combine rare (all to train) + common split
-                train_idx = np.concatenate([rare_indices, train_common_idx])
-                test_idx = test_common_idx
-
-        else:
-            # No rare classes - use standard stratified split
-            print("No rare classes - using standard stratified split")
-            train_idx, test_idx = train_test_split(
-                np.arange(len(X)), test_size=test_size,
-                stratify=y_management, random_state=42
+            y_common = target_encoded[common_indices]
+            # Can stratify common classes
+            train_common_idx, test_common_idx = train_test_split(
+                common_indices, test_size=test_size,
+                stratify=y_common, random_state=42
             )
-
-        # Create splits
-        X_train, X_test = X[train_idx], X[test_idx]
-
-        targets_train = {}
-        targets_test = {}
-        for target in self.target_columns:
-            targets_train[target] = targets_encoded[target][train_idx]
-            targets_test[target] = targets_encoded[target][test_idx]
+            # Combine rare (all to train) + common split
+            train_idx = np.concatenate([rare_indices, train_common_idx])
+            test_idx = test_common_idx
+            # Create splits
+            X_train, X_test = X[train_idx], X[test_idx]
+            y_train = target_encoded[train_idx]
+            y_test = target_encoded[test_idx]
+        else:
+            # Can stratify common classes
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, target_encoded, test_size=test_size,
+                stratify=target_encoded, random_state=42
+            )
 
         # Display split results
         actual_ratio = len(X_train) / len(X_test)
@@ -244,21 +197,24 @@ class TabNetMultiTargetTrainer:
         print(f"Training samples: {len(X_train)}")
         print(f"Test samples: {len(X_test)}")
         print(f"Actual ratio: {actual_ratio:.2f}:1")
+        if self.n_folds < 3:
+            X_val = X_train[:100]
+            y_val = y_train[:100]
+        else:
 
-        # Show distribution in splits for each target
-        for target in self.target_columns:
-            print(f"\n{target} distribution in splits:")
-            y_train_target = targets_train[target]
-            y_test_target = targets_test[target]
-
-            unique_classes = np.unique(np.concatenate([y_train_target, y_test_target]))
-            for cls in unique_classes:
-                class_name = self.label_encoders[target].classes_[cls]
-                train_count = np.sum(y_train_target == cls)
-                test_count = np.sum(y_test_target == cls)
-                print(f"  '{class_name}': Train={train_count}, Test={test_count}")
-
-        return X_train, X_test, targets_train, targets_test
+            if self.target_column != 'Management':
+                # Further split training into train/validation
+                X_train, X_val, y_train, y_val = train_test_split(
+                    X_train, y_train, test_size=0.2,
+                    stratify=y_train, random_state=42
+                )
+            else:
+                # Further split training into train/validation without stratification
+                X_train, X_val, y_train, y_val = train_test_split(
+                    X_train, y_train, test_size=0.2,
+                    random_state=42
+                )
+        return X_train, X_val, X_test, y_train, y_val, y_test
 
     def create_tabnet_model(self, input_dim, output_dim, target_name):
         """Create TabNet model for specific target"""
@@ -306,439 +262,456 @@ class TabNetMultiTargetTrainer:
         print(f"Model config: n_d={config['n_d']}, n_a={config['n_a']}, "
               f"n_steps={config['n_steps']}, classes={output_dim}")
 
-        model = TabNetClassifier(**tabnet_params)
-        return model
+        self.model = TabNetClassifier(**tabnet_params)
+        return self.model
 
-    def train_target_model(self, X_train, y_train, X_test, y_test, target_name):
-        """Train model for specific target"""
-        print(f"\n{'=' * 60}")
-        print(f"TRAINING MODEL FOR {target_name}")
-        print('=' * 60)
+    def train_model(self, X_train, y_train, X_val, y_val):
+        """Train TabNet model"""
+        print(f"\nTraining TabNet Model:")
+        print("-" * 25)
 
-        # Get number of classes
-        n_classes = len(np.unique(np.concatenate([y_train, y_test])))
+        print(f"Training set: {X_train.shape[0]} samples")
+        print(f"Validation set: {X_val.shape[0]} samples")
+        print(f"Features: {X_train.shape[1]}")
 
-        # Create model
-        model = self.create_tabnet_model(X_train.shape[1], n_classes, target_name)
+        # Calculate class weights for imbalanced data
+        classes = np.unique(y_train)
+        class_weights = compute_class_weight('balanced', classes=classes, y=y_train)
+        class_weight_dict = dict(zip(classes, class_weights))
 
-        # Create validation split from training data
-        val_size = 0.2
-        unique_train, counts_train = np.unique(y_train, return_counts=True)
-        min_train_count = np.min(counts_train)
-
-        # Check if we can create a proper validation split
-        if len(y_train) < 10 or min_train_count == 1:
-            # Too few samples or singleton classes - skip validation
-            print(f"Insufficient data for validation split - using training data as validation")
-            X_train_fit = X_train
-            y_train_fit = y_train
-            X_val = X_train[:min(50, len(X_train))]  # Use small subset as pseudo-validation
-            y_val = y_train[:min(50, len(y_train))]
-        else:
-            # Try stratified split, fall back to ensuring all training classes in validation
-            try:
-                if min_train_count >= 2:
-                    X_train_fit, X_val, y_train_fit, y_val = train_test_split(
-                        X_train, y_train, test_size=val_size,
-                        stratify=y_train, random_state=42
-                    )
-
-                    # Check if validation set has classes not in training set
-                    unique_train_fit = set(np.unique(y_train_fit))
-                    unique_val = set(np.unique(y_val))
-
-                    if not unique_val.issubset(unique_train_fit):
-                        # Re-split to ensure all validation classes are in training
-                        print(f"Validation contains classes not in training - adjusting split")
-                        raise ValueError("Need to adjust split")
-
-                    print(f"Used stratified validation split")
-                else:
-                    raise ValueError("Cannot stratify")
-
-            except (ValueError, Exception):
-                # Use random split with manual class balancing
-                print(f"Using custom validation split to ensure class compatibility")
-
-                # Ensure each class has at least one sample in training
-                indices_by_class = {}
-                for cls in unique_train:
-                    indices_by_class[cls] = np.where(y_train == cls)[0]
-
-                train_indices = []
-                val_indices = []
-
-                for cls, cls_indices in indices_by_class.items():
-                    n_cls_samples = len(cls_indices)
-                    if n_cls_samples == 1:
-                        # Single sample - put in training
-                        train_indices.extend(cls_indices)
-                    else:
-                        # Multiple samples - split but ensure at least 1 in training
-                        n_val = max(1, int(n_cls_samples * val_size))
-                        n_train = n_cls_samples - n_val
-
-                        np.random.seed(42)
-                        shuffled_indices = np.random.permutation(cls_indices)
-                        train_indices.extend(shuffled_indices[:n_train])
-                        val_indices.extend(shuffled_indices[n_train:])
-
-                X_train_fit = X_train[train_indices]
-                y_train_fit = y_train[train_indices]
-                X_val = X_train[val_indices] if val_indices else X_train[:5]  # Fallback
-                y_val = y_train[val_indices] if val_indices else y_train[:5]  # Fallback
-
-        print(f"Training: {len(X_train_fit)}, Validation: {len(X_val)}, Test: {len(X_test)}")
-
-        # Show class distribution
-        print(f"\nTraining set class distribution:")
-        for cls in unique_train:
-            class_name = self.label_encoders[target_name].classes_[cls]
-            count = np.sum(y_train_fit == cls)
-            pct = (count / len(y_train_fit)) * 100
-            print(f"  '{class_name}': {count} ({pct:.1f}%)")
-
-        # Calculate class weights for classes present in training data
-        unique_train_fit, counts_train_fit = np.unique(y_train_fit, return_counts=True)
-
-
-        class_weights = compute_class_weight('balanced',
-                                             classes=unique_train_fit,
-                                             y=y_train_fit)
-        print(f"\nClass weights:")
-        for cls, weight in zip(unique_train_fit, class_weights):
-            class_name = self.label_encoders[target_name].classes_[cls]
-            print(f"  '{class_name}': {weight:.3f}")
-
+        print(f"Class weights: {class_weight_dict}")
         # Adjust training parameters based on target
-        if target_name == 'Management':
+        if self.target_column == 'Management':
             # More epochs for complex/imbalanced target
             max_epochs = 250
             patience = 25
-            batch_size = 8  # Smaller for rare classes
-            virtual_batch_size =4
-        elif target_name == 'Severity':
+            batch_size = 32  # Smaller for rare classes
+            virtual_batch_size = 16
+            drop_last = False
+        elif self.target_column == 'Severity':
             max_epochs = 150
             patience = 25
-            batch_size = 8
-            virtual_batch_size = 4
-        else:  # Diagnosis
+            batch_size = 32
+            virtual_batch_size = 16
+            drop_last = False
+        elif self.target_column == 'Diagnosis':  # Diagnosis
             max_epochs = 150
             patience = 25
-            batch_size = 8
-            virtual_batch_size=4
-        print(f"\nTraining parameters:")
-        print(f"  Max epochs: {max_epochs}")
-        print(f"  Patience: {patience}")
-        print(f"  Batch size: {batch_size}")
+            batch_size = 32
+            virtual_batch_size = 16
+            drop_last = False
+        if len(set(y_train)) == len(set(y_val)):
+            # Train the model
+            self.model.fit(
+                X_train, y_train,
+                eval_set=[(X_val, y_val)],
+                eval_name=['validation'],
+                eval_metric=['accuracy', 'logloss'],
+                max_epochs=max_epochs,
+                patience=patience,
+                batch_size=batch_size,
+                virtual_batch_size=virtual_batch_size,
+                num_workers=0,
+                drop_last=drop_last,
+                weights=self.balancing
 
-        # # Final check on data size before training
-        # if len(X_train_fit) < batch_size:
-        #     print(f"Warning: Training data ({len(X_train_fit)}) smaller than batch size ({batch_size})")
-        #     batch_size = max(2, len(X_train_fit))
-        #     virtual_batch_size = max(2, batch_size // 2)
-        #     print(f"Adjusted batch_size to {batch_size}, virtual_batch_size to {virtual_batch_size}")
+                # max_epochs=150,
+                # patience=25,
+                # batch_size=64,
+                # virtual_batch_size=32,
 
-        # Ensure we don't have singleton batches with drop_last=True
-        drop_last = True if len(X_train_fit) > batch_size else False
+            )
+        else:
+            self.model.fit(
+                X_train, y_train,
+                # eval_set=[(X_val, y_val)],
+                # eval_name=['validation'],
+                eval_metric=['accuracy', 'logloss'],
+                max_epochs=max_epochs,
+                patience=patience,
+                batch_size=batch_size,
+                virtual_batch_size=virtual_batch_size,
+                num_workers=0,
+                drop_last=drop_last,
+                weights=self.balancing
 
-        print(f"\nFinal training parameters:")
-        print(f"  Training samples: {len(X_train_fit)}")
-        print(f"  Batch size: {batch_size}")
-        print(f"  Virtual batch size: {virtual_batch_size}")
-        print(f"  Drop last: {drop_last}")
+            )
+        print("✓ Model training completed")
 
-        # Train model
-        print(f"\nStarting training...")
-        history = model.fit(
-            X_train_fit, y_train_fit,
-            eval_set=[(X_val, y_val)],
-            eval_name=['validation'],
-            eval_metric=['accuracy', 'logloss'],
-            max_epochs=max_epochs,
-            patience=patience,
-            batch_size=batch_size,
-            virtual_batch_size=4,
-            num_workers=0,
-            drop_last=drop_last  # This ensures no singleton batches
-        )
+        return self.model
 
-        print(f"✓ Training completed for {target_name}")
-
-        # Store model
-        self.models[target_name] = model
-
-        return model, history
-
-    def evaluate_target_model(self, X_test, y_test, target_name):
-        """Evaluate model for specific target"""
-        print(f"\nEvaluating {target_name} model:")
-        print("-" * 30)
-
-        model = self.models[target_name]
+    def evaluate_model(self, X_test, y_test):
+        """Evaluate the trained model"""
+        print(f"\nModel Evaluation:")
+        print("-" * 20)
 
         # Make predictions
-        y_pred = model.predict(X_test)
-        y_pred_proba = model.predict_proba(X_test)
+        y_pred = self.model.predict(X_test)
+        y_pred_proba = self.model.predict_proba(X_test)
 
-        # Calculate accuracy
+        # Calculate metrics
         accuracy = accuracy_score(y_test, y_pred)
         print(f"Accuracy: {accuracy:.4f}")
 
-        # Get class information
-        unique_classes = np.unique(np.concatenate([y_test, y_pred]))
-        target_names = [str(self.label_encoders[target_name].classes_[i])
-                        for i in unique_classes]
+        # Classification report with proper target names
+        # Get unique classes present in test set
+        unique_test_classes = np.unique(np.concatenate([y_test, y_pred]))
+        target_names = [str(self.label_encoder.classes_[i]) for i in unique_test_classes]
 
-        # Classification report
         print(f"\nClassification Report:")
-        report = classification_report(y_test, y_pred,
-                                       labels=unique_classes,
-                                       target_names=target_names,
-                                       digits=4)
-        print(report)
+        print(classification_report(y_test, y_pred,
+                                    labels=unique_test_classes,
+                                    target_names=target_names))
 
-        # Confusion matrix
-        cm = confusion_matrix(y_test, y_pred, labels=unique_classes)
+        # Confusion Matrix
+        cm = confusion_matrix(y_test, y_pred)
         print(f"\nConfusion Matrix:")
         print(cm)
 
-        # ROC AUC
+        # ROC AUC for multiclass
         try:
-            if len(unique_classes) == 2:
-                auc_score = roc_auc_score(y_test, y_pred_proba[:, 1])
+            if len(np.unique(y_test)) > 2:
+                auc_score = roc_auc_score(y_test, y_pred_proba, multi_class='ovr', average='macro')
             else:
-                auc_score = roc_auc_score(y_test, y_pred_proba,
-                                          multi_class='ovr', average='macro')
-            print(f"ROC AUC: {auc_score:.4f}")
+                auc_score = roc_auc_score(y_test, y_pred_proba[:, 1])
+            print(f"ROC AUC Score: {auc_score:.4f}")
         except:
             auc_score = None
-            print("ROC AUC: Could not calculate")
+            print("ROC AUC Score: Could not calculate")
 
-        # Store results
-        results = {
+        return {
             'accuracy': accuracy,
-            'y_true': y_test,
             'y_pred': y_pred,
             'y_pred_proba': y_pred_proba,
             'confusion_matrix': cm,
             'auc_score': auc_score,
-            'target_names': target_names,
-            'unique_classes': unique_classes,
-            'classification_report': report
+            'target_names': target_names
         }
 
-        self.results[target_name] = results
-        return results
+    def create_visualizations(self, results, fold=None):
+        """Create visualization plots"""
+        fold_suffix = f"_fold_{fold}" if fold is not None else ""
 
-    def create_comprehensive_visualization(self):
-        """Create comprehensive visualization for all targets"""
-        print(f"\nCreating comprehensive visualizations...")
+        plt.style.use('default')
+        fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+        fig.suptitle(f'TabNet Management Prediction Results{fold_suffix}', fontsize=16, fontweight='bold')
 
-        fig, axes = plt.subplots(3, 3, figsize=(20, 18))
-        fig.suptitle('TabNet Multi-Target Prediction Results', fontsize=16, fontweight='bold')
+        # 1. Confusion Matrix Heatmap
+        ax1 = axes[0, 0]
+        cm = results['confusion_matrix']
+        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax1,
+                    xticklabels=results['target_names'],
+                    yticklabels=results['target_names'])
+        ax1.set_title('Confusion Matrix')
+        ax1.set_xlabel('Predicted')
+        ax1.set_ylabel('Actual')
 
-        for idx, target in enumerate(self.target_columns):
-            if target not in self.results:
-                continue
+        # 2. Feature Importance (if available)
+        ax2 = axes[0, 1]
+        if hasattr(self.model, 'feature_importances_'):
+            importances = self.model.feature_importances_
+            # Get top 15 features
+            top_indices = np.argsort(importances)[-15:]
+            top_features = [self.feature_columns[i] for i in top_indices]
+            top_importances = importances[top_indices]
 
-            results = self.results[target]
-
-            # Confusion Matrix
-            ax_cm = axes[idx, 0]
-            cm = results['confusion_matrix']
-            sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax_cm,
-                        xticklabels=results['target_names'],
-                        yticklabels=results['target_names'])
-            ax_cm.set_title(f'{target} - Confusion Matrix')
-            ax_cm.set_xlabel('Predicted')
-            ax_cm.set_ylabel('Actual')
-
-            # Class Distribution
-            ax_dist = axes[idx, 1]
-            y_true = results['y_true']
-            y_pred = results['y_pred']
-
-            true_counts = pd.Series(y_true).value_counts().sort_index()
-            pred_counts = pd.Series(y_pred).value_counts().sort_index()
-
-            x = np.arange(len(results['target_names']))
-            width = 0.35
-
-            ax_dist.bar(x - width / 2, [true_counts.get(i, 0) for i in results['unique_classes']],
-                        width, label='True', alpha=0.8)
-            ax_dist.bar(x + width / 2, [pred_counts.get(i, 0) for i in results['unique_classes']],
-                        width, label='Predicted', alpha=0.8)
-
-            ax_dist.set_xlabel('Classes')
-            ax_dist.set_ylabel('Count')
-            ax_dist.set_title(f'{target} - Class Distribution')
-            ax_dist.set_xticks(x)
-            ax_dist.set_xticklabels(results['target_names'], rotation=45)
-            ax_dist.legend()
-
-            # Performance Metrics
-            ax_perf = axes[idx, 2]
-            metrics = ['Accuracy']
-            values = [results['accuracy']]
-            colors = ['lightblue']
-
-            if results['auc_score'] is not None:
-                metrics.append('ROC AUC')
-                values.append(results['auc_score'])
-                colors.append('lightcoral')
-
-            bars = ax_perf.bar(metrics, values, color=colors)
-            ax_perf.set_ylabel('Score')
-            ax_perf.set_title(f'{target} - Performance')
-            ax_perf.set_ylim(0, 1.1)
+            bars = ax2.barh(range(len(top_features)), top_importances)
+            ax2.set_yticks(range(len(top_features)))
+            ax2.set_yticklabels([feat[:20] + '...' if len(feat) > 20 else feat for feat in top_features])
+            ax2.set_xlabel('Feature Importance')
+            ax2.set_title('Top 15 Feature Importances')
 
             # Add value labels
-            for bar, value in zip(bars, values):
-                height = bar.get_height()
-                ax_perf.text(bar.get_x() + bar.get_width() / 2., height + 0.02,
-                             f'{value:.4f}', ha='center', va='bottom', fontweight='bold')
+            for i, bar in enumerate(bars):
+                width = bar.get_width()
+                ax2.text(width, bar.get_y() + bar.get_height() / 2,
+                         f'{width:.3f}', ha='left', va='center', fontsize=8)
+        else:
+            ax2.text(0.5, 0.5, 'Feature Importance\nNot Available',
+                     ha='center', va='center', transform=ax2.transAxes)
+            ax2.set_title('Feature Importance')
+
+        # 3. Prediction Distribution
+        ax3 = axes[1, 0]
+        y_pred = results['y_pred']
+        pred_counts = pd.Series(y_pred).value_counts().sort_index()
+
+        bars = ax3.bar(range(len(pred_counts)), pred_counts.values)
+        ax3.set_xticks(range(len(pred_counts)))
+        ax3.set_xticklabels([results['target_names'][i] for i in pred_counts.index], rotation=45)
+        ax3.set_ylabel('Count')
+        ax3.set_title('Prediction Distribution')
+
+        # Add value labels on bars
+        for bar in bars:
+            height = bar.get_height()
+            ax3.text(bar.get_x() + bar.get_width() / 2., height,
+                     f'{int(height)}', ha='center', va='bottom')
+
+        # 4. Model Performance Metrics
+        ax4 = axes[1, 1]
+        metrics = ['Accuracy']
+        values = [results['accuracy']]
+
+        if results['auc_score'] is not None:
+            metrics.append('ROC AUC')
+            values.append(results['auc_score'])
+
+        bars = ax4.bar(metrics, values, color=['skyblue', 'lightcoral'][:len(metrics)])
+        ax4.set_ylabel('Score')
+        ax4.set_title('Model Performance Metrics')
+        ax4.set_ylim(0, 1)
+
+        # Add value labels
+        for bar, value in zip(bars, values):
+            height = bar.get_height()
+            ax4.text(bar.get_x() + bar.get_width() / 2., height + 0.01,
+                     f'{value:.4f}', ha='center', va='bottom')
 
         plt.tight_layout()
-        filename = f'../../results/tabnet_multi_target_results_{milliseconds}.png'
+        filename = f'../../results/tabnet_{self.target_column.lower()}_results{fold_suffix}_{self.timestamp}.png'
         plt.savefig(filename, dpi=300, bbox_inches='tight')
-        plt.show()
+        # plt.show()
 
-        print(f"✓ Visualization saved: {filename}")
+        print(f"Visualization saved: {filename}")
 
-    def save_all_results(self):
-        """Save results for all targets"""
-        print(f"\nSaving results...")
+    def cross_validation_experiment(self):
+        """Run cross-validation experiment"""
+        print(f"\n" + "=" * 80)
+        print(f"CROSS-VALIDATION EXPERIMENT ({self.n_folds}-FOLD)")
+        print("=" * 80)
 
-        # Create summary DataFrame
-        summary_data = []
-        for target in self.target_columns:
-            if target in self.results:
-                results = self.results[target]
-                summary_data.append({
-                    'Target': target,
-                    'Accuracy': results['accuracy'],
-                    'ROC_AUC': results['auc_score'] if results['auc_score'] else 'N/A',
-                    'Test_Samples': len(results['y_true']),
-                    'Classes': len(results['unique_classes'])
-                })
+        # Prepare data
+        X, y = self.preprocess_features()
+        cv_results = []
+        if self.n_folds < 3:
+            self.n_folds = 1
+        for fold in range(self.n_folds):
+            X_train, X_val, X_test, y_train, y_val, y_test = self.create_stratified_split_with_rare_classes(X, y)
+            self.create_tabnet_model(X_train.shape[1], len(np.unique(y)), self.target_column)
+            self.train_model(X_train, y_train, X_val, y_val)
+            model_path = os.path.join(self.model_dir,
+                                      f"tabnet_{self.target_column.lower()}_{self.timestamp}_{fold}.zip")
+            self.model.save_model(model_path)
+            print(f"✓ Saved {self.target_column} {fold} fold model: {model_path}")
+            preprocessor_data = {
+                'scaler': self.scaler,
+                'label_encoders': self.label_encoders,
+                'feature_columns': self.feature_columns,
+                'target_columns': self.target_columns,
+                'exclude_columns': self.exclude_columns,
+                'timestamp': self.timestamp,
+                'remove_single_class': self.remove_single_class,
+                'n_folds': self.n_folds,
+                'balancing': self.balancing,
+                'target_column': self.target_column
+            }
+            preprocessor_path = os.path.join(self.model_dir,
+                                             f"preprocessor_{self.target_column.lower()}_{self.timestamp}_{fold}.pkl")
+            with open(preprocessor_path, 'wb') as f:
+                pickle.dump(preprocessor_data, f)
+            print(f"✓ Saved {self.target_column} {fold} fold preprocessor: {preprocessor_path}")
 
-        summary_df = pd.DataFrame(summary_data)
-        summary_df.to_csv(f'../../output/tabnet_multi_target_summary_{milliseconds}.csv', index=False)
+            # Evaluate model
+            fold_results = self.evaluate_model(X_test, y_test)
+            fold_results['fold'] = fold
+            cv_results.append(fold_results)
+            # Save model info
+            model_info = {
+                'target_column': self.target_column,
+                'feature_columns': self.feature_columns,
+                'timestamp': self.timestamp,
+                'device': str(self.device),
+                'results_summary': {
+                    'accuracy': fold_results['accuracy'],
+                    'classes': fold_results['target_names']
+                }
+            }
 
-        # Save detailed results for each target
-        for target in self.target_columns:
-            if target in self.results:
-                results = self.results[target]
+            info_path = os.path.join(self.model_dir,
+                                     f"model_info_{self.target_column.lower()}_{self.timestamp}_fold_{fold}.pkl")
+            with open(info_path, 'wb') as f:
+                pickle.dump(model_info, f)
 
-                # Predictions
-                pred_df = pd.DataFrame({
-                    'True_Label': [self.label_encoders[target].classes_[i] for i in results['y_true']],
-                    'Predicted_Label': [self.label_encoders[target].classes_[i] for i in results['y_pred']],
-                    'Correct': results['y_true'] == results['y_pred']
-                })
+            print(f"✓ Saved model info: {info_path}")
+            # Create visualization for this fold
+            self.create_visualizations(fold_results, fold)
 
-                # Add probabilities
-                if results['y_pred_proba'] is not None:
-                    for i, class_name in enumerate(self.label_encoders[target].classes_):
-                        if i < results['y_pred_proba'].shape[1]:
-                            pred_df[f'Prob_{class_name}'] = results['y_pred_proba'][:, i]
+        return cv_results
 
-                pred_df.to_csv(f'../../output/tabnet_{target.lower()}_predictions_{milliseconds}.csv', index=False)
+    def summarize_cv_results(self, cv_results):
+        """Summarize cross-validation results"""
+        print(f"\n" + "=" * 80)
+        print("CROSS-VALIDATION SUMMARY")
+        print("=" * 80)
 
-                # Confusion matrix
-                cm_df = pd.DataFrame(results['confusion_matrix'],
-                                     index=results['target_names'],
-                                     columns=results['target_names'])
-                cm_df.to_csv(f'../../output/tabnet_{target.lower()}_confusion_matrix_{milliseconds}.csv')
+        # Extract metrics
+        accuracies = [result['accuracy'] for result in cv_results]
+        auc_scores = [result['auc_score'] for result in cv_results if result['auc_score'] is not None]
 
-        print(f"✓ Results saved:")
-        print(f"  - tabnet_multi_target_summary_{milliseconds}.csv")
-        for target in self.target_columns:
-            if target in self.results:
-                print(f"  - tabnet_{target.lower()}_predictions_{milliseconds}.csv")
-                print(f"  - tabnet_{target.lower()}_confusion_matrix_{milliseconds}.csv")
+        print(f"Accuracy Results:")
+        print("-" * 20)
+        for i, acc in enumerate(accuracies, 1):
+            print(f"Fold {i}: {acc:.4f}")
 
-    def run_complete_training(self):
-        """Run complete multi-target training pipeline"""
-        print("Starting TabNet Multi-Target Training Pipeline")
-        print("=" * 70)
+        print(f"\nAccuracy Statistics:")
+        print(f"Mean: {np.mean(accuracies):.4f} ± {np.std(accuracies):.4f}")
+        print(f"Min:  {np.min(accuracies):.4f}")
+        print(f"Max:  {np.max(accuracies):.4f}")
+
+        if auc_scores:
+            print(f"\nROC AUC Results:")
+            print("-" * 20)
+            for i, auc in enumerate(auc_scores, 1):
+                print(f"Fold {i}: {auc:.4f}")
+
+            print(f"\nROC AUC Statistics:")
+            print(f"Mean: {np.mean(auc_scores):.4f} ± {np.std(auc_scores):.4f}")
+            print(f"Min:  {np.min(auc_scores):.4f}")
+            print(f"Max:  {np.max(auc_scores):.4f}")
+
+        # Save results summary
+        summary_df = pd.DataFrame({
+            'Fold': range(1, len(cv_results) + 1),
+            'Accuracy': accuracies,
+            'ROC_AUC': [result['auc_score'] for result in cv_results]
+        })
+
+        summary_df.to_csv(f'../../results/tabnet_{self.target_column.lower()}_cv_results_{self.timestamp}.csv',
+                          index=False)
+        print(f"\nResults saved to: tabnet_{self.target_column.lower()}_cv_results_{self.timestamp}.csv")
+
+        return summary_df
+
+    def load_model_and_preprocessor(self, target_column, model_path, preprocessor_path,model_info_path):
+        """Load previously saved models and preprocessors"""
+        print(f"\nLoading models and preprocessors  from {model_path} and {preprocessor_path}...")
+
+        try:
+            # Load preprocessors
+            with open(preprocessor_path, 'rb') as f:
+                preprocessor_data = pickle.load(f)
+
+            self.scaler = preprocessor_data['scaler']
+            self.label_encoders = preprocessor_data['label_encoders']
+            self.feature_columns = preprocessor_data['feature_columns']
+            self.target_columns = preprocessor_data['target_columns']
+            self.exclude_columns = preprocessor_data['exclude_columns']
+            self.target_column = target_column
+
+            # Load feature encoders
+            for key, value in preprocessor_data.items():
+                if key.startswith('feature_encoder_'):
+                    setattr(self, key, value)
+
+            print(f"✓ Loaded preprocessors")
+
+            # Load models
+
+            if os.path.exists(model_path):
+                model = TabNetClassifier()
+                model.load_model(model_path)
+                self.model = model
+                print(f"✓ Loaded {self.target_column} model")
+            else:
+                print(f"⚠ Model file not found for {self.target_column}: {model_path}")
+
+            # Load model info
+            with open(model_info_path, 'rb') as f:
+                model_info = pickle.load(f)
+
+            print(f"✓ Loaded model info from {model_info_path}")
+            print(f"Models loaded: {list(self.models.keys())}")
+
+            return True
+
+        except Exception as e:
+            print(f"✗ Error loading models: {e}")
+            return False
+
+    def predict_new_data(self, new_data_path, target_column, model_path, preprocessor_path,model_info_path):
+        """Predict on new data using saved models"""
+        print(f"\n{'='*80}")
+        print("PREDICTING ON NEW DATA")
+        print('='*80)
+
+
+        if not self.load_model_and_preprocessor(target_column,model_path, preprocessor_path,model_info_path):
+            print("Failed to load models")
+            return None
+
+        # Load new data
+        try:
+            self.data_path = new_data_path
+            self.load_and_prepare_data()
+
+
+
+            # Preprocess new data (without fitting transformers)
+            X_scaled, y_encoded = self.preprocess_features()
+            print(f"Preprocessed data shape: {X_scaled.shape}")
+
+
+            y_pred = self.model.predict(X_scaled)
+            y_pred_proba = self.model.predict_proba(X_scaled)
+            print("-"*100)
+            print(y_pred)
+            print("-" * 100)
+            print(y_pred_proba)
+
+
+
+
+
+            return y_pred, y_pred_proba
+
+        except Exception as e:
+            print(f"✗ Error in prediction: {e}")
+            return None
+
+    def run_complete_experiment(self):
+        """Run the complete experiment"""
 
         # Load and prepare data
         if not self.load_and_prepare_data():
+            print("Failed to load data. Experiment terminated.")
             return False
 
-        # Preprocess data
-        X, targets_encoded = self.preprocess_data()
+        # Run cross-validation experiment
+        for target_column in self.target_columns:
+            self.target_column = target_column
+            print(f"Starting TabNet {self.target_column.lower()} Prediction Experiment...")
+            cv_results = self.cross_validation_experiment()
 
-        # Create custom stratified split
-        X_train, X_test, targets_train, targets_test = self.create_stratified_split_with_rare_classes(
-            X, targets_encoded
-        )
+            # Summarize results
+            summary = self.summarize_cv_results(cv_results)
 
-        # Train models for each target
-        for target in self.target_columns:
-            y_train = targets_train[target]
-            y_test = targets_test[target]
-
-            # Train model
-            model, history = self.train_target_model(X_train, y_train, X_test, y_test, target)
-
-            # Evaluate model
-            self.evaluate_target_model(X_test, y_test, target)
-
-        # Create visualizations
-        self.create_comprehensive_visualization()
-
-        # Save results
-        self.save_all_results()
-
-        # Final summary
-        print(f"\n{'=' * 70}")
-        print("MULTI-TARGET TRAINING COMPLETED!")
-        print("=" * 70)
-
-        print(f"\nFinal Results Summary:")
-        for target in self.target_columns:
-            if target in self.results:
-                acc = self.results[target]['accuracy']
-                auc = self.results[target]['auc_score']
-                n_classes = len(self.results[target]['unique_classes'])
-                print(f"- {target}: Accuracy={acc:.4f}, Classes={n_classes}",
-                      end="")
-                if auc:
-                    print(f", AUC={auc:.4f}")
-                else:
-                    print()
-
-        print(f"\nFeatures used: {len(self.feature_columns)}")
-        print(f"Training samples: {len(X_train)}")
-        print(f"Test samples: {len(X_test)}")
+            print(f"\n" + "=" * 80)
+            print("EXPERIMENT COMPLETED SUCCESSFULLY!")
 
         return True
 
 
 def main():
-    """Main execution function"""
-    print("TabNet Multi-Target Prediction Training")
-    print("=" * 50)
-    print("Targets: Diagnosis, Severity, Management")
-    print("Strategy: Separate models for each target")
-    print("Special handling: Management rare classes")
-    print("Split ratio: 2:1 (train:test)")
-    print()
+    """Main function"""
+    print(f"TabNet Prediction Diagnosis, Severity and Management for Appendicitis Data")
+    print("=" * 60)
 
-    # Create trainer
-    trainer = TabNetMultiTargetTrainer('../../data/appendicitis/processed_appendicitis_data_final.xlsx')
+    # Create predictor
+    predictor = TabNetMultiTargetTrainer('../../data/appendicitis/processed_appendicitis_data_final.xlsx', n_folds=5,
+                                         balancing=1, remove_single_class=True)
 
-    # Run training
-    success = trainer.run_complete_training()
+    # Run experiment
+    success = predictor.run_complete_experiment()
 
     if success:
-        print("\n✓ Multi-target training completed successfully!")
+        print("\n✓ TabNet Prediction Diagnosis, Severity and Management Prediction completed successfully!")
     else:
-        print("\n✗ Multi-target training failed!")
+        print("\n✗ TabNet Prediction Diagnosis, Severity and Management Prediction failed!")
 
 
 if __name__ == "__main__":
     main()
+    # predictor = TabNetMultiTargetTrainer('../../data/appendicitis/processed_appendicitis_data_final.xlsx', n_folds=5,
+    #                                      balancing=1, remove_single_class=True)
+    # predictor.predict_new_data('/Users/user/Documents/IR/course_work/F21DL-group13-appendicitis/data/appendicitis/processed_appendicitis_data_final.xlsx','Diagnosis','/Users/user/Documents/IR/course_work/F21DL-group13-appendicitis/saved_models/tabnet_diagnosis_20251019_161301_0.zip.zip','/Users/user/Documents/IR/course_work/F21DL-group13-appendicitis/saved_models/preprocessor_diagnosis_20251019_161301_0.pkl','/Users/user/Documents/IR/course_work/F21DL-group13-appendicitis/saved_models/model_info_diagnosis_20251019_161301_fold_0.pkl')

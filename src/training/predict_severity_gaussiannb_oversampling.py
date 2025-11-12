@@ -76,31 +76,6 @@ def prepare_features(df):
     return X, y, feature_columns
 
 
-def handle_missing_values(X):
-    """Handle missing values in the dataset"""
-    print("\n" + "="*60)
-    print("Checking for missing values...")
-    
-    missing_counts = X.isnull().sum()
-    if missing_counts.sum() > 0:
-        print("\nMissing values found:")
-        print(missing_counts[missing_counts > 0])
-        
-        # Fill missing values with median for numerical columns
-        for col in X.columns:
-            if X[col].isnull().sum() > 0:
-                if X[col].dtype in ['float64', 'int64']:
-                    X[col].fillna(X[col].median(), inplace=True)
-                    print(f"  - Filled {col} with median value")
-                else:
-                    X[col].fillna(X[col].mode()[0], inplace=True)
-                    print(f"  - Filled {col} with mode value")
-    else:
-        print("No missing values found.")
-    
-    return X
-
-
 def encode_categorical_features(X):
     """Encode categorical features if any"""
     print("\n" + "="*60)
@@ -268,7 +243,7 @@ def evaluate_model(model, X_train, X_test, y_train, y_test):
     plt.ylabel('Actual')
     plt.xlabel('Predicted')
     plt.tight_layout()
-    plt.savefig('confusion_matrix_gaussiannb_oversampling.png', dpi=300, bbox_inches='tight')
+    plt.savefig('../../results/confusion_matrix_gaussiannb_oversampling.png', dpi=300, bbox_inches='tight')
     print("\nConfusion matrix saved as 'confusion_matrix_gaussiannb_oversampling.png'")
     plt.close()
     
@@ -289,8 +264,8 @@ def evaluate_model(model, X_train, X_test, y_train, y_test):
         plt.legend()
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
-        plt.savefig('roc_curve_gaussiannb_oversampling.png', dpi=300, bbox_inches='tight')
-        print("ROC curve saved as 'roc_curve_gaussiannb_oversampling.png'")
+        plt.savefig('../../results/roc_curve_gaussiannb_oversampling.png', dpi=300, bbox_inches='tight')
+        print("ROC curve saved as 'results/roc_curve_gaussiannb_oversampling.png'")
         plt.close()
     
     return y_train_pred, y_test_pred
@@ -335,8 +310,8 @@ def plot_class_distribution(y_original, y_resampled, y_test):
         axes[2].text(test_counts.index[i], v + 5, str(v), ha='center', va='bottom')
     
     plt.tight_layout()
-    plt.savefig('class_distribution_gaussiannb_oversampling.png', dpi=300, bbox_inches='tight')
-    print("Class distribution plot saved as 'class_distribution_gaussiannb_oversampling.png'")
+    plt.savefig('../../output/class_distribution_gaussiannb_oversampling.png', dpi=300, bbox_inches='tight')
+    print("Class distribution plot saved as 'output/class_distribution_gaussiannb_oversampling.png'")
     plt.close()
 
 
@@ -380,8 +355,8 @@ def plot_feature_statistics(model, X_train, y_train, feature_names, top_n=20):
     plt.xlabel('Feature Importance (Variance of Means)')
     plt.title(f'Top {top_n} Feature Importances - Gaussian NB (with Over-sampling)')
     plt.tight_layout()
-    plt.savefig('feature_importance_gaussiannb_oversampling.png', dpi=300, bbox_inches='tight')
-    print(f"\nFeature importance plot saved as 'feature_importance_gaussiannb_oversampling.png'")
+    plt.savefig('../../output/feature_importance_gaussiannb_oversampling.png', dpi=300, bbox_inches='tight')
+    print(f"\nFeature importance plot saved as 'output/feature_importance_gaussiannb_oversampling.png'")
     plt.close()
     
     # Plot mean values for top 5 features across classes
@@ -407,8 +382,8 @@ def plot_feature_statistics(model, X_train, y_train, feature_names, top_n=20):
     
     plt.suptitle('Top 5 Features: Mean and Std Dev per Class', fontsize=14, y=1.00)
     plt.tight_layout()
-    plt.savefig('feature_statistics_gaussiannb_oversampling.png', dpi=300, bbox_inches='tight')
-    print("Feature statistics plot saved as 'feature_statistics_gaussiannb_oversampling.png'")
+    plt.savefig('../../output/feature_statistics_gaussiannb_oversampling.png', dpi=300, bbox_inches='tight')
+    print("Feature statistics plot saved as 'output/feature_statistics_gaussiannb_oversampling.png'")
     plt.close()
     
     return importance_df
@@ -475,7 +450,7 @@ def compare_methods(X_train, X_test, y_train, y_test):
         ax.grid(axis='y', alpha=0.3)
     
     plt.tight_layout()
-    plt.savefig('oversampling_methods_comparison_gaussiannb.png', dpi=300, bbox_inches='tight')
+    plt.savefig('../../results/oversampling_methods_comparison_gaussiannb.png', dpi=300, bbox_inches='tight')
     print("\nComparison plot saved as 'oversampling_methods_comparison_gaussiannb.png'")
     plt.close()
     
@@ -506,7 +481,7 @@ def plot_probability_distributions(model, X_test, y_test):
         plt.legend()
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
-        plt.savefig('probability_distribution_gaussiannb_oversampling.png', dpi=300, bbox_inches='tight')
+        plt.savefig('../../output/probability_distribution_gaussiannb_oversampling.png', dpi=300, bbox_inches='tight')
         print("Probability distribution plot saved as 'probability_distribution_gaussiannb_oversampling.png'")
         plt.close()
 
@@ -519,14 +494,12 @@ def main():
     print("="*60)
     
     # Load data
-    filepath = 'data/appendicitis/processed_appendicitis_data_final.xlsx'
+    filepath = '../../data/appendicitis/processed_appendicitis_data_final.xlsx'
     df = load_data(filepath)
     
     # Prepare features
     X, y, feature_columns = prepare_features(df)
     
-    # Handle missing values
-    X = handle_missing_values(X)
     
     # Encode categorical features
     X = encode_categorical_features(X)
@@ -581,41 +554,6 @@ def main():
     print("\nComparison Results:")
     print(comparison_results.to_string(index=False))
     
-    # Save model
-    print("\n" + "="*60)
-    print("Saving model...")
-    import joblib
-    joblib.dump(model, 'gaussiannb_model_oversampling.pkl')
-    joblib.dump(final_feature_names, 'feature_names_gaussiannb_oversampling.pkl')
-    if cv_scores is not None:
-        joblib.dump(cv_scores, 'cv_scores_gaussiannb_oversampling.pkl')
-    print("Model saved as 'gaussiannb_model_oversampling.pkl'")
-    print("Feature names saved as 'feature_names_gaussiannb_oversampling.pkl'")
-    if cv_scores is not None:
-        print("CV scores saved as 'cv_scores_gaussiannb_oversampling.pkl'")
-    
-    print("\n" + "="*60)
-    print("Analysis Complete!")
-    print("="*60)
-    
-    print("\nGenerated Files:")
-    print("  1. confusion_matrix_gaussiannb_oversampling.png")
-    print("  2. roc_curve_gaussiannb_oversampling.png (if binary classification)")
-    print("  3. class_distribution_gaussiannb_oversampling.png")
-    print("  4. feature_importance_gaussiannb_oversampling.png")
-    print("  5. feature_statistics_gaussiannb_oversampling.png")
-    print("  6. probability_distribution_gaussiannb_oversampling.png (if binary)")
-    print("  7. oversampling_methods_comparison_gaussiannb.png")
-    print("  8. gaussiannb_model_oversampling.pkl")
-    print("  9. feature_names_gaussiannb_oversampling.pkl")
-    print(" 10. cv_scores_gaussiannb_oversampling.pkl")
-    
-    print("\nModel Summary:")
-    print(f"  Number of Classes: {len(model.classes_)}")
-    print(f"  Classes: {model.classes_}")
-    print(f"  Number of Features: {model.n_features_in_}")
-    if cv_scores is not None:
-        print(f"  Mean CV Accuracy: {cv_scores.mean():.4f} (+/- {cv_scores.std() * 2:.4f})")
 
 
 if __name__ == "__main__":

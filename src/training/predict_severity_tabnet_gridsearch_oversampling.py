@@ -89,31 +89,6 @@ def prepare_features(df):
     return X, y, feature_columns
 
 
-def handle_missing_values(X):
-    """Handle missing values in the dataset"""
-    print("\n" + "="*60)
-    print("Checking for missing values...")
-    
-    missing_counts = X.isnull().sum()
-    if missing_counts.sum() > 0:
-        print("\nMissing values found:")
-        print(missing_counts[missing_counts > 0])
-        
-        # Fill missing values with median for numerical columns
-        for col in X.columns:
-            if X[col].isnull().sum() > 0:
-                if X[col].dtype in ['float64', 'int64']:
-                    X[col].fillna(X[col].median(), inplace=True)
-                    print(f"  - Filled {col} with median value")
-                else:
-                    X[col].fillna(X[col].mode()[0], inplace=True)
-                    print(f"  - Filled {col} with mode value")
-    else:
-        print("No missing values found.")
-    
-    return X
-
-
 def encode_categorical_features(X):
     """Encode categorical features if any"""
     print("\n" + "="*60)
@@ -693,9 +668,6 @@ def main():
     
     # Prepare features
     X, y, feature_columns = prepare_features(df)
-    
-    # Handle missing values
-    X = handle_missing_values(X)
     
     # Encode categorical features
     X = encode_categorical_features(X)

@@ -13,7 +13,7 @@ Excluded columns for training:
 
 import pandas as pd
 import numpy as np
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, GridSearchCV, cross_val_score
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import (
@@ -21,7 +21,8 @@ from sklearn.metrics import (
     confusion_matrix,
     accuracy_score,
     roc_auc_score,
-    roc_curve
+    roc_curve,
+    precision_recall_fscore_support
 )
 from imblearn.over_sampling import SMOTE, RandomOverSampler, ADASYN
 from collections import Counter
@@ -74,30 +75,6 @@ def prepare_features(df):
     
     return X, y, feature_columns
 
-
-def handle_missing_values(X):
-    """Handle missing values in the dataset"""
-    print("\n" + "="*60)
-    print("Checking for missing values...")
-    
-    missing_counts = X.isnull().sum()
-    if missing_counts.sum() > 0:
-        print("\nMissing values found:")
-        print(missing_counts[missing_counts > 0])
-        
-        # Fill missing values with median for numerical columns
-        for col in X.columns:
-            if X[col].isnull().sum() > 0:
-                if X[col].dtype in ['float64', 'int64']:
-                    X[col].fillna(X[col].median(), inplace=True)
-                    print(f"  - Filled {col} with median value")
-                else:
-                    X[col].fillna(X[col].mode()[0], inplace=True)
-                    print(f"  - Filled {col} with mode value")
-    else:
-        print("No missing values found.")
-    
-    return X
 
 
 def encode_categorical_features(X):
@@ -185,41 +162,122 @@ def apply_oversampling(X_train, y_train, method='SMOTE'):
     return X_resampled, y_resampled
 
 
-def train_logistic_regression(X_train, X_test, y_train, y_test):
-    """Train logistic regression model"""
-    print("\n" + "="*60)
-    print("Training Logistic Regression model...")
+def scale_features(X_train, X_test):
+    """
+    Scale features using StandardScaler
+    Important for Logistic Regression as it's sensitive to feature scales
     
-    # Standardize features
+    Parameters:
+    -----------
+    X_train : array-like
+        Training features
+    X_test : array-like
+        Testing features
+    
+    Returns:
+    --------
+    X_train_scaled, X_test_scaled, scaler
+    """
+    print("\n" + "="*60)
+    print("Scaling features...")
+    print("Note: Feature scaling is crucial for Logistic Regression")
+    
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
     
-    # Train logistic regression model
-    # Using max_iter=1000 to ensure convergence
-    model = LogisticRegression(
-        random_state=42,
-        max_iter=1000,
-        solver='lbfgs',
-        multi_class='auto',
-        class_weight=None  # No class weight since we're using over-sampling
-    )
+    print(f"Features scaled using StandardScaler")
+    print(f"Training set shape: {X_train_scaled.shape}")
+    print(f"Testing set shape: {X_test_scaled.shape}")
     
-    model.fit(X_train_scaled, y_train)
+    return X_train_scaled, X_test_scaled, scaler
+
+
+def train_logistic_regression(X_train, y_train, tune_hyperparameters=True):
+    """
+    Train logistic regression model with optional hyperparameter tuning
+    
+    Parameters:
+    -----------
+    X_train : array-like
+        Training features (should be scaled)
+    y_train : array-like
+        Training labels
+    tune_hyperparameters : bool, default=True
+        Whether to perform hyperparameter tuning using GridSearchCV
+    
+    Returns:
+    --------
+    model : trained LogisticRegression
+    best_params : dict of best parameters (if tuning enabled)
+    """
+    print("\n" + "="*60)
+    print("Training Logistic Regression model...")
+    
+    if tune_hyperparameters:
+        print("Performing hyperparameter tuning with GridSearchCV...")
+        
+        # Define parameter grid
+        param_grid = {
+            'C': [0.001, 0.01, 0.1, 1, 10, 100],  # Regularization strength
+            'penalty': ['l2', 'none'],  # Regularization type
+            'solver': ['lbfgs', 'saga'],  # Optimization algorithm
+            'max_iter': [500, 1000, 2000],  # Maximum iterations
+            'class_weight': [None, 'balanced']  # Handle class imbalance
+        }
+        
+        # Create base model
+        base_model = LogisticRegression(random_state=42)
+        
+        # Perform grid search
+        grid_search = GridSearchCV(
+            base_model,
+            param_grid,
+            cv=5,
+            scoring='accuracy',
+            n_jobs=-1,
+            verbose=1
+        )
+        
+        grid_search.fit(X_train, y_train)
+        
+        # Get best model
+        model = grid_search.best_estimator_
+        best_params = grid_search.best_params_
+        
+        print("\nBest parameters found:")
+        for param, value in best_params.items():
+            print(f"  {param}: {value}")
+        print(f"\nBest cross-validation score: {grid_search.best_score_:.4f}")
+        
+    else:
+        print("Training with default parameters...")
+        # Train with reasonable default parameters
+        model = LogisticRegression(
+            C=1.0,
+            penalty='l2',
+            solver='lbfgs',
+            max_iter=1000,
+            random_state=42,
+            class_weight='balanced'
+        )
+        model.fit(X_train, y_train)
+        best_params = None
+    
     print("Model training completed.")
     
-    return model, scaler, X_train_scaled, X_test_scaled
+    return model, best_params
 
 
-def evaluate_model(model, X_train_scaled, X_test_scaled, y_train, y_test):
+def evaluate_model(model, X_train, X_test, y_train, y_test):
     """Evaluate the trained model"""
     print("\n" + "="*60)
     print("Model Evaluation")
     print("="*60)
     
     # Make predictions
-    y_train_pred = model.predict(X_train_scaled)
-    y_test_pred = model.predict(X_test_scaled)
+    y_train_pred = model.predict(X_train)
+    y_test_pred = model.predict(X_test)
     
     # Training accuracy
     train_accuracy = accuracy_score(y_train, y_train_pred)
@@ -249,13 +307,13 @@ def evaluate_model(model, X_train_scaled, X_test_scaled, y_train, y_test):
     plt.ylabel('Actual')
     plt.xlabel('Predicted')
     plt.tight_layout()
-    plt.savefig('confusion_matrix_logistic_regression_oversampling.png', dpi=300, bbox_inches='tight')
+    plt.savefig('../../results/confusion_matrix_logistic_regression_oversampling.png', dpi=300, bbox_inches='tight')
     print("\nConfusion matrix saved as 'confusion_matrix_logistic_regression_oversampling.png'")
     plt.close()
     
     # ROC curve and AUC (for binary classification)
     if len(np.unique(y_test)) == 2:
-        y_test_proba = model.predict_proba(X_test_scaled)[:, 1]
+        y_test_proba = model.predict_proba(X_test)[:, 1]
         auc_score = roc_auc_score(y_test, y_test_proba)
         print(f"\nROC AUC Score: {auc_score:.4f}")
         
@@ -270,7 +328,7 @@ def evaluate_model(model, X_train_scaled, X_test_scaled, y_train, y_test):
         plt.legend()
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
-        plt.savefig('roc_curve_logistic_regression_oversampling.png', dpi=300, bbox_inches='tight')
+        plt.savefig('../../results/roc_curve_logistic_regression_oversampling.png', dpi=300, bbox_inches='tight')
         print("ROC curve saved as 'roc_curve_logistic_regression_oversampling.png'")
         plt.close()
     
@@ -316,54 +374,85 @@ def plot_class_distribution(y_original, y_resampled, y_test):
         axes[2].text(test_counts.index[i], v + 5, str(v), ha='center', va='bottom')
     
     plt.tight_layout()
-    plt.savefig('class_distribution_oversampling.png', dpi=300, bbox_inches='tight')
-    print("Class distribution plot saved as 'class_distribution_oversampling.png'")
+    plt.savefig('../../output/class_distribution_logistic_regression_oversampling.png', dpi=300, bbox_inches='tight')
+    print("Class distribution plot saved as 'class_distribution_logistic_regression_oversampling.png'")
     plt.close()
 
 
-def plot_feature_importance(model, feature_names):
-    """Plot feature importance (coefficients) from logistic regression"""
+def plot_feature_coefficients(model, feature_names, top_n=20):
+    """
+    Plot feature coefficients from logistic regression
+    Coefficients indicate the importance and direction of influence
+    """
     print("\n" + "="*60)
-    print("Feature Importance (Coefficients)")
+    print("Feature Coefficients")
     print("="*60)
     
     # Get coefficients
-    if len(model.classes_) == 2:
-        # Binary classification
-        coefficients = model.coef_[0]
+    if hasattr(model, 'coef_'):
+        coefficients = model.coef_[0] if len(model.coef_.shape) > 1 else model.coef_
+        
+        # Create dataframe for visualization
+        feature_coef = pd.DataFrame({
+            'Feature': feature_names,
+            'Coefficient': coefficients,
+            'Abs_Coefficient': np.abs(coefficients)
+        })
+        
+        # Sort by absolute coefficient value
+        feature_coef = feature_coef.sort_values('Abs_Coefficient', ascending=False)
+        
+        # Display top features
+        print(f"\nTop {top_n} Most Important Features (by absolute coefficient):")
+        print(feature_coef.head(top_n)[['Feature', 'Coefficient']].to_string(index=False))
+        
+        # Plot top features
+        plt.figure(figsize=(10, 8))
+        top_features = feature_coef.head(top_n)
+        colors = ['green' if x > 0 else 'red' for x in top_features['Coefficient']]
+        plt.barh(range(len(top_features)), top_features['Coefficient'], color=colors, alpha=0.7)
+        plt.yticks(range(len(top_features)), top_features['Feature'])
+        plt.xlabel('Coefficient Value')
+        plt.title(f'Top {top_n} Feature Coefficients - Logistic Regression (with Over-sampling)\n(Green=Positive, Red=Negative)')
+        plt.axvline(x=0, color='black', linestyle='--', linewidth=1)
+        plt.tight_layout()
+        plt.savefig('../../output/feature_coefficients_logistic_regression_oversampling.png', dpi=300, bbox_inches='tight')
+        print(f"\nFeature coefficients plot saved as 'feature_coefficients_logistic_regression_oversampling.png'")
+        plt.close()
+        
+        return feature_coef
     else:
-        # Multi-class classification - use average absolute coefficients
-        coefficients = np.mean(np.abs(model.coef_), axis=0)
+        print("Model does not have coefficients (might be using a different penalty)")
+        return None
+
+
+def plot_probability_distribution(model, X_test, y_test):
+    """Plot predicted probability distribution"""
+    print("\n" + "="*60)
+    print("Plotting Probability Distribution")
+    print("="*60)
     
-    # Create dataframe for visualization
-    feature_importance = pd.DataFrame({
-        'Feature': feature_names,
-        'Coefficient': coefficients
-    })
+    # Get predicted probabilities
+    y_proba = model.predict_proba(X_test)
     
-    # Sort by absolute value
-    feature_importance['Abs_Coefficient'] = np.abs(feature_importance['Coefficient'])
-    feature_importance = feature_importance.sort_values('Abs_Coefficient', ascending=False)
-    
-    # Display top 20 features
-    print("\nTop 20 Most Important Features:")
-    print(feature_importance.head(20).to_string(index=False))
-    
-    # Plot top 20 features
-    plt.figure(figsize=(10, 8))
-    top_features = feature_importance.head(20)
-    colors = ['red' if x < 0 else 'green' for x in top_features['Coefficient']]
-    plt.barh(range(len(top_features)), top_features['Coefficient'], color=colors)
-    plt.yticks(range(len(top_features)), top_features['Feature'])
-    plt.xlabel('Coefficient Value')
-    plt.title('Top 20 Feature Coefficients - Logistic Regression (with Over-sampling)')
-    plt.axvline(x=0, color='black', linestyle='--', linewidth=0.8)
-    plt.tight_layout()
-    plt.savefig('feature_importance_logistic_regression_oversampling.png', dpi=300, bbox_inches='tight')
-    print("\nFeature importance plot saved as 'feature_importance_logistic_regression_oversampling.png'")
-    plt.close()
-    
-    return feature_importance
+    # For binary classification
+    if y_proba.shape[1] == 2:
+        plt.figure(figsize=(10, 6))
+        
+        # Plot histogram for each class
+        for class_label in np.unique(y_test):
+            mask = y_test == class_label
+            plt.hist(y_proba[mask, 1], bins=30, alpha=0.6, label=f'Actual Class {class_label}')
+        
+        plt.xlabel('Predicted Probability (Class 1)')
+        plt.ylabel('Frequency')
+        plt.title('Distribution of Predicted Probabilities - Logistic Regression')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig('../../output/probability_distribution_logistic_regression_oversampling.png', dpi=300, bbox_inches='tight')
+        print("Probability distribution plot saved as 'probability_distribution_logistic_regression_oversampling.png'")
+        plt.close()
 
 
 def compare_methods(X_train, X_test, y_train, y_test, final_feature_names):
@@ -383,38 +472,90 @@ def compare_methods(X_train, X_test, y_train, y_test, final_feature_names):
         # Apply over-sampling
         X_train_resampled, y_train_resampled = apply_oversampling(X_train, y_train, method=method)
         
-        # Train model
-        model, scaler, X_train_scaled, X_test_scaled = train_logistic_regression(
-            X_train_resampled, X_test, y_train_resampled, y_test
-        )
+        # Scale features
+        X_train_scaled, X_test_scaled, _ = scale_features(X_train_resampled, X_test)
+        
+        # Train model (without hyperparameter tuning for speed)
+        model, _ = train_logistic_regression(X_train_scaled, y_train_resampled, tune_hyperparameters=False)
         
         # Evaluate
         y_test_pred = model.predict(X_test_scaled)
         test_accuracy = accuracy_score(y_test, y_test_pred)
         
+        # Get precision, recall, f1 for each class
+        precision, recall, f1, _ = precision_recall_fscore_support(y_test, y_test_pred, average='weighted')
+        
         results.append({
             'Method': method,
-            'Test Accuracy': test_accuracy
+            'Test Accuracy': test_accuracy,
+            'Precision': precision,
+            'Recall': recall,
+            'F1-Score': f1
         })
         
-        print(f"\n{method} - Test Accuracy: {test_accuracy:.4f}")
+        print(f"\n{method} Results:")
+        print(f"  Test Accuracy: {test_accuracy:.4f}")
+        print(f"  Precision: {precision:.4f}")
+        print(f"  Recall: {recall:.4f}")
+        print(f"  F1-Score: {f1:.4f}")
     
     # Plot comparison
     results_df = pd.DataFrame(results)
-    plt.figure(figsize=(10, 6))
-    plt.bar(results_df['Method'], results_df['Test Accuracy'], color=['skyblue', 'lightgreen', 'lightcoral'])
-    plt.xlabel('Over-sampling Method')
-    plt.ylabel('Test Accuracy')
-    plt.title('Comparison of Over-sampling Methods')
-    plt.ylim([0, 1])
-    for i, v in enumerate(results_df['Test Accuracy']):
-        plt.text(i, v + 0.02, f'{v:.4f}', ha='center', va='bottom')
+    
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    
+    metrics = ['Test Accuracy', 'Precision', 'Recall', 'F1-Score']
+    colors = ['skyblue', 'lightgreen', 'lightcoral']
+    
+    for idx, metric in enumerate(metrics):
+        ax = axes[idx // 2, idx % 2]
+        ax.bar(results_df['Method'], results_df[metric], color=colors)
+        ax.set_xlabel('Over-sampling Method')
+        ax.set_ylabel(metric)
+        ax.set_title(f'{metric} Comparison')
+        ax.set_ylim([0, 1])
+        for i, v in enumerate(results_df[metric]):
+            ax.text(i, v + 0.02, f'{v:.4f}', ha='center', va='bottom')
+        ax.grid(axis='y', alpha=0.3)
+    
     plt.tight_layout()
-    plt.savefig('oversampling_methods_comparison.png', dpi=300, bbox_inches='tight')
-    print("\nComparison plot saved as 'oversampling_methods_comparison.png'")
+    plt.savefig('../../results/oversampling_methods_comparison_logistic_regression.png', dpi=300, bbox_inches='tight')
+    print("\nComparison plot saved as 'oversampling_methods_comparison_logistic_regression.png'")
     plt.close()
     
     return results_df
+
+
+def perform_cross_validation(model, X, y, cv=5):
+    """Perform cross-validation to assess model stability"""
+    print("\n" + "="*60)
+    print("Performing Cross-Validation")
+    print("="*60)
+    
+    cv_scores = cross_val_score(model, X, y, cv=cv, scoring='accuracy', n_jobs=-1)
+    
+    print(f"\nCross-Validation Results ({cv}-fold):")
+    print(f"  Scores: {cv_scores}")
+    print(f"  Mean Accuracy: {cv_scores.mean():.4f}")
+    print(f"  Standard Deviation: {cv_scores.std():.4f}")
+    print(f"  Min Accuracy: {cv_scores.min():.4f}")
+    print(f"  Max Accuracy: {cv_scores.max():.4f}")
+    
+    # Plot CV scores
+    plt.figure(figsize=(8, 6))
+    plt.bar(range(1, cv+1), cv_scores, color='steelblue', alpha=0.7)
+    plt.axhline(y=cv_scores.mean(), color='red', linestyle='--', label=f'Mean: {cv_scores.mean():.4f}')
+    plt.xlabel('Fold')
+    plt.ylabel('Accuracy')
+    plt.title(f'{cv}-Fold Cross-Validation Scores - Logistic Regression')
+    plt.legend()
+    plt.grid(axis='y', alpha=0.3)
+    plt.tight_layout()
+    plt.savefig('../../output/cross_validation_logistic_regression_oversampling.png', dpi=300, bbox_inches='tight')
+    print("\nCross-validation plot saved as 'cross_validation_logistic_regression_oversampling.png'")
+    plt.close()
+    
+    return cv_scores
 
 
 def main():
@@ -425,14 +566,12 @@ def main():
     print("="*60)
     
     # Load data
-    filepath = 'data/appendicitis/processed_appendicitis_data_final.xlsx'
+    filepath = '../../data/appendicitis/processed_appendicitis_data_final.xlsx'
     df = load_data(filepath)
     
     # Prepare features
     X, y, feature_columns = prepare_features(df)
-    
-    # Handle missing values
-    X = handle_missing_values(X)
+
     
     # Encode categorical features
     X = encode_categorical_features(X)
@@ -461,9 +600,12 @@ def main():
     # Plot class distribution
     plot_class_distribution(y_train_original, y_train_resampled, y_test)
     
-    # Train model with resampled data
-    model, scaler, X_train_scaled, X_test_scaled = train_logistic_regression(
-        X_train_resampled, X_test, y_train_resampled, y_test
+    # Scale features (IMPORTANT for Logistic Regression)
+    X_train_scaled, X_test_scaled, scaler = scale_features(X_train_resampled, X_test)
+    
+    # Train model with resampled data and hyperparameter tuning
+    model, best_params = train_logistic_regression(
+        X_train_scaled, y_train_resampled, tune_hyperparameters=True
     )
     
     # Evaluate model
@@ -471,8 +613,14 @@ def main():
         model, X_train_scaled, X_test_scaled, y_train_resampled, y_test
     )
     
-    # Plot feature importance
-    feature_importance = plot_feature_importance(model, final_feature_names)
+    # Plot feature coefficients
+    feature_coef = plot_feature_coefficients(model, final_feature_names, top_n=20)
+    
+    # Plot probability distribution
+    plot_probability_distribution(model, X_test_scaled, y_test)
+    
+    # Perform cross-validation
+    cv_scores = perform_cross_validation(model, X_train_scaled, y_train_resampled, cv=5)
     
     # Compare different over-sampling methods
     print("\n" + "="*60)
@@ -480,32 +628,19 @@ def main():
     print("="*60)
     comparison_results = compare_methods(X_train, X_test, y_train, y_test, final_feature_names)
     print("\nComparison Results:")
-    print(comparison_results)
-    
-    # Save model and scaler
-    print("\n" + "="*60)
-    print("Saving model and scaler...")
-    import joblib
-    joblib.dump(model, 'logistic_regression_model_oversampling.pkl')
-    joblib.dump(scaler, 'scaler_oversampling.pkl')
-    joblib.dump(final_feature_names, 'feature_names_oversampling.pkl')
-    print("Model saved as 'logistic_regression_model_oversampling.pkl'")
-    print("Scaler saved as 'scaler_oversampling.pkl'")
-    print("Feature names saved as 'feature_names_oversampling.pkl'")
+    print(comparison_results.to_string(index=False))
     
     print("\n" + "="*60)
-    print("Analysis Complete!")
+    print("Training Complete!")
     print("="*60)
-    
-    print("\nGenerated Files:")
-    print("  1. confusion_matrix_logistic_regression_oversampling.png")
-    print("  2. roc_curve_logistic_regression_oversampling.png (if binary classification)")
-    print("  3. class_distribution_oversampling.png")
-    print("  4. feature_importance_logistic_regression_oversampling.png")
-    print("  5. oversampling_methods_comparison.png")
-    print("  6. logistic_regression_model_oversampling.pkl")
-    print("  7. scaler_oversampling.pkl")
-    print("  8. feature_names_oversampling.pkl")
+    print("\nGenerated files:")
+    print("  - ../../results/confusion_matrix_logistic_regression_oversampling.png")
+    print("  - ../../results/roc_curve_logistic_regression_oversampling.png")
+    print("  - ../../output/class_distribution_logistic_regression_oversampling.png")
+    print("  - ../../output/feature_coefficients_logistic_regression_oversampling.png")
+    print("  - ../../output/probability_distribution_logistic_regression_oversampling.png")
+    print("  - ../../output/cross_validation_logistic_regression_oversampling.png")
+    print("  - ../../results/oversampling_methods_comparison_logistic_regression.png")
 
 
 if __name__ == "__main__":
