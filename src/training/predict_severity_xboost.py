@@ -1,10 +1,11 @@
 """
-Logistic Regression Model for Predicting Appendicitis Severity
-This script trains a logistic regression model to predict the'Severity' column
+XGBoost Model for Predicting Appendicitis Severity
+This script trains an XGBoost model to predict the'Severity' column
 using pre-split and balanced training/test data.
 
 Features:
 - Uses pre-split training data (already balanced with RandomOverSampler)
+- Removes duplicate samples from training data
 - Uses pre-split test data
 - Performance metrics: AUROC and AUPR
 - No cross-validation - direct training on training set
@@ -13,7 +14,10 @@ Features:
 
 import pandas as pd
 import numpy as np
-from sklearn.linear_model import LogisticRegression
+import subprocess
+subprocess.check_call(["pip", "install", "xgboost"])
+
+from xgboost import XGBClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import (
     classification_report,
@@ -25,10 +29,7 @@ from sklearn.metrics import (
     average_precision_score,
     auc,
     precision_recall_fscore_support,
-    make_scorer,
-    precision_score,
-    recall_score,
-    f1_score
+    make_scorer
 )
 from collections import Counter
 import matplotlib.pyplot as plt
@@ -58,6 +59,39 @@ def load_data(train_path, test_path):
     print(f"\nColumns in dataset: {train_df.columns.tolist()}")
 
     return train_df, test_df
+
+
+def remove_duplicates(train_df, test_df):
+    """Remove duplicate samples from training and test datasets"""
+    print("\n" + "=" * 70)
+    print("Removing duplicate samples...")
+    print("=" * 70)
+
+    # Check for duplicates in training set
+    train_duplicates_before = train_df.duplicated().sum()
+    print(f"\nTraining set:")
+    print(f"  Shape before removing duplicates: {train_df.shape}")
+    print(f"  Number of duplicate rows: {train_duplicates_before}")
+
+    # Remove duplicates from training set
+    train_df_clean = train_df.drop_duplicates()
+    train_duplicates_removed = train_df.shape[0] - train_df_clean.shape[0]
+    print(f"Duplicates removed: {train_duplicates_removed}")
+    print(f"  Shape after removing duplicates: {train_df_clean.shape}")
+
+    # Check for duplicates in test set
+    test_duplicates_before = test_df.duplicated().sum()
+    print(f"\nTest set:")
+    print(f"  Shape before removing duplicates: {test_df.shape}")
+    print(f"  Number of duplicate rows: {test_duplicates_before}")
+
+    # Remove duplicates from test set
+    test_df_clean = test_df.drop_duplicates()
+    test_duplicates_removed = test_df.shape[0] - test_df_clean.shape[0]
+    print(f"  Duplicates removed: {test_duplicates_removed}")
+    print(f"  Shape after removing duplicates: {test_df_clean.shape}")
+
+    return train_df_clean, test_df_clean
 
 
 def prepare_features(train_df, test_df):
@@ -145,40 +179,9 @@ def encode_categorical_features(X_train, X_test):
         return X_train, X_test
 
 
-def scale_features(X_train, X_test):
+def train_xgboost(X_train, y_train):
     """
-    Scale features for Logistic Regression (important for regularization)
-
-    Parameters:
-    -----------
-    X_train : DataFrame
-        Training features
-    X_test : DataFrame
-        Test features
-
-    Returns:
-    --------
-    X_train_scaled, X_test_scaled : scaled features
-    scaler : fitted StandardScaler object
-    """
-    print("\n" + "=" * 70)
-    print("Scaling features (required for Logistic Regression)...")
-    print("=" * 70)
-
-    scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_train)
-    X_test_scaled = scaler.transform(X_test)
-
-    print("Features scaled using StandardScaler (mean=0, std=1)")
-    print(f"Training set shape after scaling: {X_train_scaled.shape}")
-    print(f"Test set shape after scaling: {X_test_scaled.shape}")
-
-    return X_train_scaled, X_test_scaled, scaler
-
-
-def train_logistic_regression(X_train, y_train):
-    """
-    Train logistic regression model without cross-validation
+    Train XGBoost model without cross-validation
 
     Parameters:
     -----------
@@ -189,35 +192,46 @@ def train_logistic_regression(X_train, y_train):
 
     Returns:
     --------
-    model : trained LogisticRegression
+    model : trained XGBClassifier
     """
     print("\n" + "=" * 70)
-    print("Training Logistic Regression model (No Cross-Validation)...")
+    print("Training XGBoost model (No Cross-Validation)...")
     print("=" * 70)
 
     # Train with specified parameters
-    model = LogisticRegression(
-        C=1.0,
-        penalty='l2',
-        solver='lbfgs',
-        max_iter=1000,
-        random_state=42
+    model = XGBClassifier(
+        n_estimators=100,
+        max_depth=6,
+        learning_rate=0.1,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        min_child_weight=1,
+        gamma=0,
+        reg_alpha=0,
+        reg_lambda=1,
+        random_state=42,
+        n_jobs=-1,
+        eval_metric='logloss'
     )
 
     # Train model on full training set
     print("\nTraining on full training set...")
-    model.fit(X_train, y_train)
+    model.fit(X_train, y_train, verbose=False)
 
     print("\nModel Configuration:")
     print("-" * 70)
-    print(f"  C: {model.C}")
-    print(f"  penalty: {model.penalty}")
-    print(f"  solver: {model.solver}")
-    print(f"  max_iter: {model.max_iter}")
+    print(f"  n_estimators: {model.n_estimators}")
+    print(f"  max_depth: {model.max_depth}")
+    print(f"  learning_rate: {model.learning_rate}")
+    print(f"  subsample: {model.subsample}")
+    print(f"  colsample_bytree: {model.colsample_bytree}")
+    print(f"  min_child_weight: {model.min_child_weight}")
+    print(f"  gamma: {model.gamma}")
+    print(f"  reg_alpha: {model.reg_alpha}")
+    print(f"  reg_lambda: {model.reg_lambda}")
     print(f"  random_state: {model.random_state}")
 
     print("\nModel training completed successfully.")
-    print(f"Number of iterations: {model.n_iter_[0]}")
 
     return model
 
@@ -305,43 +319,43 @@ def evaluate_model(model, X_train, X_test, y_train, y_test):
     # Plot confusion matrix
     plt.figure(figsize=(10, 8))
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', cbar=True)
-    plt.title('Confusion Matrix - Logistic Regression (No CV)')
+    plt.title('Confusion Matrix - XGBoost (No CV)')
     plt.ylabel('Actual')
     plt.xlabel('Predicted')
     plt.tight_layout()
-    plt.savefig('results/confusion_matrix_logistic_regression.png', dpi=300, bbox_inches='tight')
-    print("\nConfusion matrix saved as 'results/confusion_matrix_logistic_regression.png'")
+    plt.savefig('results/confusion_matrix_xgboost.png', dpi=300, bbox_inches='tight')
+    print("\nConfusion matrix saved as 'results/confusion_matrix_xgboost.png'")
     plt.close()
 
     # Plot ROC curve
     fpr, tpr, _ = roc_curve(y_test, y_test_proba)
 
     plt.figure(figsize=(10, 8))
-    plt.plot(fpr, tpr, label=f'Logistic Regression (AUROC = {test_auroc:.4f})', linewidth=2, color='blue')
+    plt.plot(fpr, tpr, label=f'XGBoost (AUROC = {test_auroc:.4f})', linewidth=2, color='blue')
     plt.plot([0, 1], [0, 1], 'k--', label='Random Classifier', linewidth=1)
     plt.xlabel('False Positive Rate', fontsize=12)
     plt.ylabel('True Positive Rate', fontsize=12)
-    plt.title('ROC Curve - Logistic Regression (No CV)', fontsize=14, fontweight='bold')
+    plt.title('ROC Curve - XGBoost (No CV)', fontsize=14, fontweight='bold')
     plt.legend(fontsize=11)
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
-    plt.savefig('results/roc_curve_logistic_regression.png', dpi=300, bbox_inches='tight')
-    print("ROC curve saved as 'results/roc_curve_logistic_regression.png'")
+    plt.savefig('results/roc_curve_xgboost.png', dpi=300, bbox_inches='tight')
+    print("ROC curve saved as 'results/roc_curve_xgboost.png'")
     plt.close()
 
     # Plot Precision-Recall curve
     precision, recall, _ = precision_recall_curve(y_test, y_test_proba)
 
     plt.figure(figsize=(10, 8))
-    plt.plot(recall, precision, label=f'Logistic Regression (AUPR = {test_aupr:.4f})', linewidth=2, color='green')
+    plt.plot(recall, precision, label=f'XGBoost (AUPR = {test_aupr:.4f})', linewidth=2, color='green')
     plt.xlabel('Recall', fontsize=12)
     plt.ylabel('Precision', fontsize=12)
-    plt.title('Precision-Recall Curve - Logistic Regression (No CV)', fontsize=14, fontweight='bold')
+    plt.title('Precision-Recall Curve - XGBoost (No CV)', fontsize=14, fontweight='bold')
     plt.legend(fontsize=11)
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
-    plt.savefig('results/precision_recall_curve_logistic_regression.png', dpi=300, bbox_inches='tight')
-    print("Precision-Recall curve saved as 'results/precision_recall_curve_logistic_regression.png'")
+    plt.savefig('results/precision_recall_curve_xgboost.png', dpi=300, bbox_inches='tight')
+    print("Precision-Recall curve saved as 'results/precision_recall_curve_xgboost.png'")
     plt.close()
 
     # Combined ROC and PR curves
@@ -364,10 +378,10 @@ def evaluate_model(model, X_train, X_test, y_train, y_test):
     axes[1].legend(fontsize=11)
     axes[1].grid(True, alpha=0.3)
 
-    plt.suptitle('Logistic Regression Performance (No Cross-Validation)', fontsize=15, fontweight='bold', y=1.02)
+    plt.suptitle('XGBoost Performance (No Cross-Validation)', fontsize=15, fontweight='bold', y=1.02)
     plt.tight_layout()
-    plt.savefig('results/combined_curves_logistic_regression.png', dpi=300, bbox_inches='tight')
-    print("Combined curves saved as 'results/combined_curves_logistic_regression.png'")
+    plt.savefig('results/combined_curves_xgboost.png', dpi=300, bbox_inches='tight')
+    print("Combined curves saved as 'results/combined_curves_xgboost.png'")
     plt.close()
 
     return y_train_pred, y_test_pred, test_auroc, test_aupr
@@ -384,7 +398,7 @@ def plot_class_distribution(y_train, y_test):
     # Training set
     train_counts = y_train.value_counts().sort_index()
     axes[0].bar(train_counts.index, train_counts.values, color='lightgreen', edgecolor='black', alpha=0.8)
-    axes[0].set_title('Training Set Class Distribution\n(Already Balanced)', fontsize=13, fontweight='bold')
+    axes[0].set_title('Training Set Class Distribution\n(After Removing Duplicates)', fontsize=13, fontweight='bold')
     axes[0].set_xlabel('Severity Class', fontsize=12)
     axes[0].set_ylabel('Number of Samples', fontsize=12)
     axes[0].grid(axis='y', alpha=0.3)
@@ -394,7 +408,7 @@ def plot_class_distribution(y_train, y_test):
     # Test set
     test_counts = y_test.value_counts().sort_index()
     axes[1].bar(test_counts.index, test_counts.values, color='lightcoral', edgecolor='black', alpha=0.8)
-    axes[1].set_title('Test Set Class Distribution\n(Original Distribution)', fontsize=13, fontweight='bold')
+    axes[1].set_title('Test Set Class Distribution\n(After Removing Duplicates)', fontsize=13, fontweight='bold')
     axes[1].set_xlabel('Severity Class', fontsize=12)
     axes[1].set_ylabel('Number of Samples', fontsize=12)
     axes[1].grid(axis='y', alpha=0.3)
@@ -402,58 +416,145 @@ def plot_class_distribution(y_train, y_test):
         axes[1].text(test_counts.index[i], v + 5, str(v), ha='center', va='bottom', fontsize=11)
 
     plt.tight_layout()
-    plt.savefig('output/class_distribution_logistic_regression.png', dpi=300, bbox_inches='tight')
-    print("Class distribution plot saved as 'output/class_distribution_logistic_regression.png'")
+    plt.savefig('output/class_distribution_xgboost.png', dpi=300, bbox_inches='tight')
+    print("Class distribution plot saved as 'output/class_distribution_xgboost.png'")
     plt.close()
 
 
 def plot_feature_importance(model, feature_names, top_n=20):
-    """Plot feature coefficients from logistic regression"""
+    """Plot feature importance from XGBoost"""
     print("\n" + "=" * 70)
-    print("Feature Coefficients Analysis")
+    print("Feature Importance Analysis")
     print("=" * 70)
 
-    # Get feature coefficients
-    coefficients = model.coef_[0]
+    # Get feature importances
+    importances = model.feature_importances_
 
     # Create dataframe for visualization
     feature_importance = pd.DataFrame({
         'Feature': feature_names,
-        'Coefficient': coefficients,
-        'Abs_Coefficient': np.abs(coefficients)
+        'Importance': importances
     })
 
-    # Sort by absolute coefficient value
-    feature_importance = feature_importance.sort_values('Abs_Coefficient', ascending=False)
+    # Sort by importance
+    feature_importance = feature_importance.sort_values('Importance', ascending=False)
 
     # Display top features
-    print(f"\nTop {top_n} Most Important Features (by absolute coefficient):")
+    print(f"\nTop {top_n} Most Important Features:")
     print("-" * 70)
     print(feature_importance.head(top_n).to_string(index=False))
 
     # Plot top features
     plt.figure(figsize=(12, 8))
     top_features = feature_importance.head(top_n)
-    colors = ['green' if x > 0 else 'red' for x in top_features['Coefficient']]
-    bars = plt.barh(range(len(top_features)), top_features['Coefficient'], color=colors, edgecolor='black', alpha=0.7)
+    colors = plt.cm.viridis(np.linspace(0, 1, len(top_features)))
+    bars = plt.barh(range(len(top_features)), top_features['Importance'], color=colors, edgecolor='black')
     plt.yticks(range(len(top_features)), top_features['Feature'], fontsize=10)
-    plt.xlabel('Coefficient Value', fontsize=12)
-    plt.title(f'Top {top_n} Feature Coefficients - Logistic Regression (No CV)', fontsize=14, fontweight='bold')
-    plt.axvline(x=0, color='black', linestyle='-', linewidth=0.8)
+    plt.xlabel('Feature Importance', fontsize=12)
+    plt.title(f'Top {top_n} Feature Importances - XGBoost (No CV)', fontsize=14, fontweight='bold')
     plt.grid(axis='x', alpha=0.3)
-
-    # Add legend
-    from matplotlib.patches import Patch
-    legend_elements = [Patch(facecolor='green', alpha=0.7, label='Positive (increases risk)'),
-                       Patch(facecolor='red', alpha=0.7, label='Negative (decreases risk)')]
-    plt.legend(handles=legend_elements, fontsize=10)
-
     plt.tight_layout()
-    plt.savefig('output/feature_coefficients_logistic_regression.png', dpi=300, bbox_inches='tight')
-    print(f"\nFeature coefficients plot saved as 'output/feature_coefficients_logistic_regression.png'")
+    plt.savefig('output/feature_importance_xgboost.png', dpi=300, bbox_inches='tight')
+    print(f"\nFeature importance plot saved as 'output/feature_importance_xgboost.png'")
     plt.close()
 
     return feature_importance
+
+
+def plot_learning_curve(model, X_train, X_test, y_train, y_test):
+    """Plot learning curve showing training progress"""
+    print("\n" + "=" * 70)
+    print("Analyzing Learning Curve")
+    print("=" * 70)
+
+    # Train model with evaluation set to track performance
+    eval_set = [(X_train, y_train), (X_test, y_test)]
+    model_eval = XGBClassifier(
+        n_estimators=model.n_estimators,
+        max_depth=model.max_depth,
+        learning_rate=model.learning_rate,
+        subsample=model.subsample,
+        colsample_bytree=model.colsample_bytree,
+        min_child_weight=model.min_child_weight,
+        gamma=model.gamma,
+        reg_alpha=model.reg_alpha,
+        reg_lambda=model.reg_lambda,
+        random_state=model.random_state,
+        n_jobs=model.n_jobs,
+        eval_metric='logloss'
+    )
+
+    model_eval.fit(X_train, y_train, eval_set=eval_set, verbose=False)
+
+    # Get evaluation results
+    results = model_eval.evals_result()
+    epochs = len(results['validation_0']['logloss'])
+    x_axis = range(0, epochs)
+
+    # Plot log loss
+    fig, ax = plt.subplots(figsize=(12, 6))
+    ax.plot(x_axis, results['validation_0']['logloss'], label='Train', linewidth=2)
+    ax.plot(x_axis, results['validation_1']['logloss'], label='Test', linewidth=2)
+    ax.legend(fontsize=11)
+    plt.ylabel('Log Loss', fontsize=12)
+    plt.xlabel('Number of Boosting Rounds', fontsize=12)
+    plt.title('XGBoost Learning Curve', fontsize=14, fontweight='bold')
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig('output/learning_curve_xgboost.png', dpi=300, bbox_inches='tight')
+    print("Learning curve plot saved as 'output/learning_curve_xgboost.png'")
+    plt.close()
+
+
+def plot_estimator_performance(model, X_train, X_test, y_train, y_test):
+    """Plot how performance changes with number of estimators"""
+    print("\n" + "=" * 70)
+    print("Analyzing Performance vs Number of Estimators")
+    print("=" * 70)
+
+    n_estimators_range = range(1, model.n_estimators + 1, max(1, model.n_estimators // 20))
+    train_scores = []
+    test_scores = []
+
+    print("Testing different numbers of estimators...")
+    for n in n_estimators_range:
+        # Create model with n estimators
+        temp_model = XGBClassifier(
+            n_estimators=n,
+            max_depth=model.max_depth,
+            learning_rate=model.learning_rate,
+            subsample=model.subsample,
+            colsample_bytree=model.colsample_bytree,
+            min_child_weight=model.min_child_weight,
+            gamma=model.gamma,
+            reg_alpha=model.reg_alpha,
+            reg_lambda=model.reg_lambda,
+            random_state=model.random_state,
+            n_jobs=model.n_jobs,
+            eval_metric='logloss'
+        )
+        temp_model.fit(X_train, y_train, verbose=False)
+
+        train_proba = temp_model.predict_proba(X_train)[:, 1]
+        test_proba = temp_model.predict_proba(X_test)[:, 1]
+
+        train_score = roc_auc_score(y_train, train_proba)
+        test_score = roc_auc_score(y_test, test_proba)
+
+        train_scores.append(train_score)
+        test_scores.append(test_score)# Plot
+    plt.figure(figsize=(12, 6))
+    plt.plot(n_estimators_range, train_scores, label='Training Score', marker='o', linewidth=2)
+    plt.plot(n_estimators_range, test_scores, label='Test Score', marker='s', linewidth=2)
+    plt.xlabel('Number of Estimators', fontsize=12)
+    plt.ylabel('ROC AUC Score', fontsize=12)
+    plt.title('XGBoost Performance vs Number of Estimators', fontsize=14, fontweight='bold')
+    plt.legend(fontsize=11)
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig('output/estimators_vs_performance.png', dpi=300, bbox_inches='tight')
+    print(f"Estimators vs Performance plot saved as 'output/estimators_vs_performance.png'")
+    plt.close()
 
 
 def save_results_summary(model, test_auroc, test_aupr, feature_importance, y_test, y_test_pred):
@@ -462,24 +563,29 @@ def save_results_summary(model, test_auroc, test_aupr, feature_importance, y_tes
     print("Saving Results Summary")
     print("=" * 70)
 
-    with open('results/logistic_regression_summary.txt', 'w') as f:
+    with open('results/xgboost_summary.txt', 'w') as f:
         f.write("=" * 70 + "\n")
-        f.write("Logistic Regression Model Results (No Cross-Validation)\n")
+        f.write("XGBoost Model Results (No Cross-Validation)\n")
         f.write("=" * 70 + "\n\n")
 
         f.write("Training Method:\n")
         f.write("-" * 70 + "\n")
         f.write("Direct training on full training set (No Cross-Validation)\n")
+        f.write("Duplicate samples removed before training\n")
         f.write("  Single train-test split evaluation\n\n")
 
         f.write("Model Configuration:\n")
         f.write("-" * 70 + "\n")
-        f.write(f"  C: {model.C}\n")
-        f.write(f"  penalty: {model.penalty}\n")
-        f.write(f"  solver: {model.solver}\n")
-        f.write(f"  max_iter: {model.max_iter}\n")
+        f.write(f"  n_estimators: {model.n_estimators}\n")
+        f.write(f"  max_depth: {model.max_depth}\n")
+        f.write(f"  learning_rate: {model.learning_rate}\n")
+        f.write(f"  subsample: {model.subsample}\n")
+        f.write(f"  colsample_bytree: {model.colsample_bytree}\n")
+        f.write(f"  min_child_weight: {model.min_child_weight}\n")
+        f.write(f"  gamma: {model.gamma}\n")
+        f.write(f"  reg_alpha: {model.reg_alpha}\n")
+        f.write(f"  reg_lambda: {model.reg_lambda}\n")
         f.write(f"  random_state: {model.random_state}\n")
-        f.write(f"  Number of iterations: {model.n_iter_[0]}\n")
 
         f.write("\n" + "=" * 70 + "\n")
         f.write("Test Set Performance:\n")
@@ -494,11 +600,11 @@ def save_results_summary(model, test_auroc, test_aupr, feature_importance, y_tes
         f.write(classification_report(y_test, y_test_pred))
 
         f.write("\n" + "=" * 70 + "\n")
-        f.write("Top 20 Feature Coefficients:\n")
+        f.write("Top 20 Feature Importances:\n")
         f.write("=" * 70 + "\n")
         f.write(feature_importance.head(20).to_string(index=False))
         f.write("\n")
-        print("Results summary saved as 'results/logistic_regression_summary.txt'")
+        print("Results summary saved as 'results/xgboost_summary.txt'")
 
 
 def main():
@@ -506,16 +612,20 @@ def main():
     os.chdir("../../")
 
     print("\n" + "=" * 70)
-    print("Logistic Regression for Appendicitis Severity Prediction")
+    print("XGBoost for Appendicitis Severity Prediction")
     print("Training Method: Direct Training (No Cross-Validation)")
+    print("Duplicate Removal: Enabled")
     print("=" * 70)
 
     # Define file paths
-    train_path = 'data/appendicitis/train_data_balanced.csv'
-    test_path = 'data/appendicitis/test_data.csv'
+    train_path = 'data/train_severity1_resampled.csv'
+    test_path = 'data/test_severity1.csv'
 
     # Load pre-split data
     train_df, test_df = load_data(train_path, test_path)
+
+    # Remove duplicate samples
+    train_df, test_df = remove_duplicates(train_df, test_df)
 
     # Prepare features
     X_train, X_test, y_train, y_test, feature_columns = prepare_features(train_df, test_df)
@@ -527,43 +637,44 @@ def main():
     final_feature_names = X_train.columns.tolist()
     print(f"\nFinal number of features: {len(final_feature_names)}")
 
-    # Scale features (IMPORTANT for Logistic Regression!)
-    X_train_scaled, X_test_scaled, scaler = scale_features(X_train, X_test)
+    # Note: XGBoost doesn't require feature scaling
+    print("\n" + "=" * 70)
+    print("Note: XGBoost does not require feature scaling")
+    print("=" * 70)
 
     # Plot class distribution
     plot_class_distribution(y_train, y_test)
 
     # Train model (No Cross-Validation)
-    model = train_logistic_regression(X_train_scaled, y_train)
+    model = train_xgboost(X_train, y_train)
 
     # Evaluate model with AUROC and AUPR
     y_train_pred, y_test_pred, test_auroc, test_aupr = evaluate_model(
-        model, X_train_scaled, X_test_scaled, y_train, y_test
+        model, X_train, X_test, y_train, y_test
     )
 
-    # Plot feature coefficients
+    # Plot feature importance
     feature_importance = plot_feature_importance(model, final_feature_names, top_n=20)
+
+    # Plot learning curve
+    plot_learning_curve(model, X_train, X_test, y_train, y_test)
+
+    # Plot estimator performance analysis
+    plot_estimator_performance(model, X_train, X_test, y_train, y_test)
 
     # Save results summary
     save_results_summary(model, test_auroc, test_aupr, feature_importance, y_test, y_test_pred)
-
-    # Calculate additional metrics for final summary
-    test_precision = precision_score(y_test, y_test_pred)
-    test_recall = recall_score(y_test, y_test_pred)
-    test_f1 = f1_score(y_test, y_test_pred)
 
     print("\n" + "=" * 70)
     print("FINAL SUMMARY")
     print("=" * 70)
     print(f"Training Method: Direct Training (No Cross-Validation)")
+    print(f"Duplicate Removal: Enabled")
     print(f"Training samples: {len(y_train)}")
     print(f"Test samples: {len(y_test)}")
     print(f"Test AUROC: {test_auroc:.4f}")
     print(f"Test AUPR: {test_aupr:.4f}")
     print(f"Test Accuracy: {accuracy_score(y_test, y_test_pred):.4f}")
-    print(f"Test Precision: {test_precision:.4f}")
-    print(f"Test Recall: {test_recall:.4f}")
-    print(f"Test F1-Score: {test_f1:.4f}")
     print("\nAll results saved successfully!")
     print("=" * 70)
 
